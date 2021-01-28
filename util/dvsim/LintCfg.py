@@ -12,31 +12,19 @@ from pathlib import Path
 from tabulate import tabulate
 
 from OneShotCfg import OneShotCfg
-from utils import subst_wildcards
-
-
-# helper function for printing messages
-def _print_msg_list(msg_list_name, msg_list):
-    md_results = ""
-    if msg_list:
-        md_results += "### %s\n" % msg_list_name
-        md_results += "```\n"
-        for msg in msg_list:
-            md_results += msg + "\n\n"
-        md_results += "```\n"
-    return md_results
+from utils import VERBOSE, print_msg_list, subst_wildcards
 
 
 class LintCfg(OneShotCfg):
     """Derivative class for linting purposes.
     """
-    def __init__(self, flow_cfg_file, proj_root, args):
+
+    flow = 'lint'
+
+    def __init__(self, flow_cfg_file, hjson_data, args, mk_config):
         # This is a lint-specific attribute
         self.is_style_lint = ""
-        super().__init__(flow_cfg_file, proj_root, args)
-
-    def __post_init__(self):
-        super().__post_init__()
+        super().__init__(flow_cfg_file, hjson_data, args, mk_config)
 
         # Convert to boolean
         if self.is_style_lint == "True":
@@ -50,12 +38,6 @@ class LintCfg(OneShotCfg):
         else:
             self.results_title = self.name.upper() + " Lint Results"
 
-    @staticmethod
-    def create_instance(flow_cfg_file, proj_root, args):
-        '''Create a new instance of this class as with given parameters.
-        '''
-        return LintCfg(flow_cfg_file, proj_root, args)
-
     def gen_results_summary(self):
         '''
         Gathers the aggregated results from all sub configs
@@ -65,7 +47,11 @@ class LintCfg(OneShotCfg):
         log.info("Create summary of lint results")
 
         results_str = "## " + self.results_title + " (Summary)\n\n"
-        results_str += "### " + self.timestamp_long + "\n\n"
+        results_str += "### " + self.timestamp_long + "\n"
+        if self.revision:
+            results_str += "### " + self.revision + "\n"
+        results_str += "### Branch: " + self.branch + "\n"
+        results_str += "\n"
 
         header = [
             "Name", "Tool Warnings", "Tool Errors", "Lint Warnings",
@@ -101,7 +87,7 @@ class LintCfg(OneShotCfg):
         # Return only the tables
         return self.results_summary_md
 
-    def _gen_results(self):
+    def _gen_results(self, results):
         # '''
         # The function is called after the regression has completed. It looks
         # for a regr_results.hjson file with aggregated results from the lint run.
@@ -121,13 +107,16 @@ class LintCfg(OneShotCfg):
         # parsing script that transforms the tool output into the hjson above
         # needs to be adapted.
         #
-        # note that if this is a master config, the results will
+        # note that if this is a primary config, the results will
         # be generated using the _gen_results_summary function
         # '''
 
         # Generate results table for runs.
         results_str = "## " + self.results_title + "\n\n"
         results_str += "### " + self.timestamp_long + "\n"
+        if self.revision:
+            results_str += "### " + self.revision + "\n"
+        results_str += "### Branch: " + self.branch + "\n"
         results_str += "### Lint Tool: " + self.tool.upper() + "\n\n"
 
         header = [
@@ -149,10 +138,10 @@ class LintCfg(OneShotCfg):
             result_data = Path(
                 subst_wildcards(self.build_dir, {"build_mode": mode.name}) +
                 '/results.hjson')
-            log.info("looking for result data file at %s", result_data)
+            log.info("[results:hjson]: [%s]: [%s]", self.name, result_data)
 
             try:
-                with open(result_data, "r") as results_file:
+                with result_data.open() as results_file:
                     self.result = hjson.load(results_file, use_decimal=True)
             except IOError as err:
                 log.warning("%s", err)
@@ -191,34 +180,48 @@ class LintCfg(OneShotCfg):
             self.result_summary["lint_errors"] += self.result["lint_errors"]
 
             # Append detailed messages if they exist
-            if sum([
-                    len(self.result["warnings"]),
-                    len(self.result["errors"]),
-                    len(self.result["lint_warnings"]),
-                    len(self.result["lint_errors"])
-            ]):
-                fail_msgs += "\n## Errors and Warnings for Build Mode `'" + mode.name + "'`\n"
-                fail_msgs += _print_msg_list("Tool Errors",
-                                             self.result["errors"])
-                fail_msgs += _print_msg_list("Tool Warnings",
-                                             self.result["warnings"])
-                fail_msgs += _print_msg_list("Lint Errors",
-                                             self.result["lint_errors"])
-                fail_msgs += _print_msg_list("Lint Warnings",
-                                             self.result["lint_warnings"])
-                # fail_msgs += _print_msg_list("Lint Infos", results["lint_infos"])
+            hdr_key_pairs = [("Tool Warnings", "warnings"),
+                             ("Tool Errors", "errors"),
+                             ("Lint Warnings", "lint_warnings"),
+                             ("Lint Errors", "lint_errors")]
+
+            # Lint fails if any warning or error message has occurred
+            self.errors_seen = False
+            for _, key in hdr_key_pairs:
+                if key in self.result:
+                    if self.result.get(key):
+                        self.errors_seen = True
+                        break
+
+            if self.errors_seen:
+                fail_msgs += "\n### Errors and Warnings for Build Mode `'" + mode.name + "'`\n"
+                for hdr, key in hdr_key_pairs:
+                    msgs = self.result.get(key)
+                    fail_msgs += print_msg_list("#### " + hdr, msgs, self.max_msg_count)
 
         if len(table) > 1:
             self.results_md = results_str + tabulate(
                 table, headers="firstrow", tablefmt="pipe",
-                colalign=colalign) + "\n" + fail_msgs
+                colalign=colalign) + "\n"
+
+            # the email and published reports will default to self.results_md if they are
+            # empty. in case they need to be sanitized, override them and do not append
+            # detailed messages.
+            if self.sanitize_email_results:
+                self.email_results_md = self.results_md
+            if self.sanitize_publish_results:
+                self.publish_results_md = self.results_md
+            # locally generated result always contains all details
+            self.results_md += fail_msgs
         else:
             self.results_md = results_str + "\nNo results to display.\n"
+            self.email_results_md = self.results_md
+            self.publish_results_md = self.results_md
 
         # Write results to the scratch area
-        self.results_file = self.scratch_path + "/results_" + self.timestamp + ".md"
-        with open(self.results_file, 'w') as f:
+        results_file = self.scratch_path + "/results_" + self.timestamp + ".md"
+        with open(results_file, 'w') as f:
             f.write(self.results_md)
 
-        log.info("[results page]: [%s] [%s]", self.name, results_file)
+        log.log(VERBOSE, "[results page]: [%s] [%s]", self.name, results_file)
         return self.results_md

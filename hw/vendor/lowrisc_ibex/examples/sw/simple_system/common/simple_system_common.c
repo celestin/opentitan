@@ -105,9 +105,13 @@ void pcount_reset() {
 void pcount_enable(int enable) {
   // Note cycle is disabled with everything else
   unsigned int inhibit_val = enable ? 0x0 : 0xFFFFFFFF;
-  // mucounteren == mcountinhibit but binutils doesn't seem to known the
-  // mcountinhibit name
-  asm volatile("csrw  mucounteren, %0\n" : : "r"(inhibit_val));
+  // CSR 0x320 was called `mucounteren` in the privileged spec v1.9.1, it was
+  // then dropped in v1.10, and then re-added in v1.11 with the name
+  // `mcountinhibit`. Unfortunately, the version of binutils we use only allows
+  // the old name, and LLVM only supports the new name (though this is changed
+  // on trunk to support both), so we use the numeric value here for maximum
+  // compatibility.
+  asm volatile("csrw  0x320, %0\n" : : "r"(inhibit_val));
 }
 
 unsigned int get_mepc() {
@@ -131,9 +135,12 @@ unsigned int get_mtval() {
 void simple_exc_handler(void) {
   puts("EXCEPTION!!!\n");
   puts("============\n");
-  puts("MEPC:   0x%0X");puthex(get_mepc());
-  puts("\nMCAUSE: 0x%0X");puthex(get_mcause());
-  puts("\nMTVAL:  0x%0X");puthex(get_mtval());
+  puts("MEPC:   0x");
+  puthex(get_mepc());
+  puts("\nMCAUSE: 0x");
+  puthex(get_mcause());
+  puts("\nMTVAL:  0x");
+  puthex(get_mtval());
   putchar('\n');
   sim_halt();
 

@@ -34,6 +34,10 @@ class ${name}_scoreboard extends dv_base_scoreboard #(
 % for agent in env_agents:
     ${agent}_fifo = new("${agent}_fifo", this);
 % endfor
+% if has_alerts:
+    // TODO: remove once support alert checking
+    do_alert_check = 0;
+% endif
   endfunction
 
   function void connect_phase(uvm_phase phase);
@@ -64,7 +68,12 @@ class ${name}_scoreboard extends dv_base_scoreboard #(
     uvm_reg csr;
     bit     do_read_check   = 1'b1;
     bit     write           = item.is_write();
-    uvm_reg_addr_t csr_addr = get_normalized_addr(item.a_addr);
+    uvm_reg_addr_t csr_addr = ral.get_word_aligned_addr(item.a_addr);
+
+    bit addr_phase_read   = (!write && channel == AddrChannel);
+    bit addr_phase_write  = (write && channel == AddrChannel);
+    bit data_phase_read   = (!write && channel == DataChannel);
+    bit data_phase_write  = (write && channel == DataChannel);
 
     // if access was to a valid csr, get the csr handle
     if (csr_addr inside {cfg.csr_addrs}) begin
@@ -75,11 +84,9 @@ class ${name}_scoreboard extends dv_base_scoreboard #(
       `uvm_fatal(`gfn, $sformatf("Access unexpected addr 0x%0h", csr_addr))
     end
 
-    if (channel == AddrChannel) begin
-      // if incoming access is a write to a valid csr, then make updates right away
-      if (write) begin
-        void'(csr.predict(.value(item.a_data), .kind(UVM_PREDICT_WRITE), .be(item.a_mask)));
-      end
+    // if incoming access is a write to a valid csr, then make updates right away
+    if (addr_phase_write) begin
+      void'(csr.predict(.value(item.a_data), .kind(UVM_PREDICT_WRITE), .be(item.a_mask)));
     end
 
     // process the csr req
@@ -87,13 +94,23 @@ class ${name}_scoreboard extends dv_base_scoreboard #(
     // for read, update predication at address phase and compare at data phase
     case (csr.get_name())
       // add individual case item for each csr
+      "intr_state": begin
+        // FIXME
+        do_read_check = 1'b0;
+      end
+      "intr_enable": begin
+        // FIXME
+      end
+      "intr_test": begin
+        // FIXME
+      end
       default: begin
         `uvm_fatal(`gfn, $sformatf("invalid csr: %0s", csr.get_full_name()))
       end
     endcase
 
     // On reads, if do_read_check, is set, then check mirrored_value against item.d_data
-    if (!write && channel == DataChannel) begin
+    if (data_phase_read) begin
       if (do_read_check) begin
         `DV_CHECK_EQ(csr.get_mirrored_value(), item.d_data,
                      $sformatf("reg name: %0s", csr.get_full_name()))

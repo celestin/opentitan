@@ -1,3 +1,6 @@
+// Copyright lowRISC contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
 { name: "main",
   type: "xbar",
   clock_primary: "clk_main_i", // Main clock, used in sockets
@@ -69,7 +72,37 @@
       reset:     "rst_main_ni",
       pipeline_byp: "false"
     },
+    { name:         "kmac"
+      type:         "device"
+      clock:        "clk_main_i"
+      rset:         "rst_main_ni"
+      pipeline_byp: "false"
+    }
     { name:      "aes",
+      type:      "device",
+      clock:     "clk_main_i"
+      reset:     "rst_main_ni"
+      pipeline_byp: "false"
+    },
+    { name:      "entropy_src",
+      type:      "device",
+      clock:     "clk_main_i"
+      reset:     "rst_main_ni"
+      pipeline_byp: "false"
+    },
+    { name:      "csrng",
+      type:      "device",
+      clock:     "clk_main_i"
+      reset:     "rst_main_ni"
+      pipeline_byp: "false"
+    },
+    { name:      "edn0",
+      type:      "device",
+      clock:     "clk_main_i"
+      reset:     "rst_main_ni"
+      pipeline_byp: "false"
+    },
+    { name:      "edn1",
       type:      "device",
       clock:     "clk_main_i"
       reset:     "rst_main_ni"
@@ -97,26 +130,43 @@
         }],
       pipeline_byp: "false"
     },
-    { name:      "alert_handler",
+    { name:      "padctrl",
       type:      "device",
       clock:     "clk_main_i",
-      inst_type: "alert_handler",
+      reset:     "rst_fixed_ni",
+      inst_type: "padctrl",
+      addr_range: [{
+        base_addr: "0x40160000",
+        size_byte: "0x1000",
+        }],
       pipeline_byp: "false"
     },
-    // dummy module to capture the alert handler escalation signals
-    // and test them by converting them into IRQs
-    { name:      "nmi_gen",
+    { name:      "otbn",
+      type:      "device",
+      clock:     "clk_main_i"
+      reset:     "rst_main_ni"
+      pipeline_byp: "false"
+    },
+    { name:      "keymgr",
+      type:      "device",
+      clock:     "clk_main_i"
+      reset:     "rst_main_ni"
+      pipeline_byp: "false"
+    },
+    { name:      "sram_ctrl_main",
       type:      "device",
       clock:     "clk_main_i",
-      inst_type: "nmi_gen",
-      pipeline_byp: "false"
-    }
+      reset:     "rst_main_ni",
+      pipeline: "false"
+    },
   ],
   connections: {
     corei:  ["rom", "debug_mem", "ram_main", "eflash"],
     cored:  ["rom", "debug_mem", "ram_main", "eflash", "peri", "flash_ctrl",
-    "aes", "hmac", "rv_plic", "pinmux", "alert_handler", "nmi_gen"],
+    "aes", "entropy_src", "csrng", "edn0", "edn1",
+    "hmac", "rv_plic", "pinmux", "padctrl", "otbn", "keymgr", "kmac", "sram_ctrl_main"],
     dm_sba: ["rom",              "ram_main", "eflash", "peri", "flash_ctrl",
-    "aes", "hmac", "rv_plic", "pinmux", "alert_handler", "nmi_gen"],
+    "aes", "entropy_src", "csrng", "edn0", "edn1",
+    "hmac", "rv_plic", "pinmux", "padctrl", "otbn", "kmac", "sram_ctrl_main"],
   },
 }

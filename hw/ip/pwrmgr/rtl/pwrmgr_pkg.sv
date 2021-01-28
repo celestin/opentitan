@@ -8,16 +8,19 @@
 package pwrmgr_pkg;
 
   // global constant
-  parameter ALWAYS_ON_DOMAIN = 0;
+  parameter int ALWAYS_ON_DOMAIN = 0;
 
   // variables referenced by other modules / packages
-  parameter HwRstReqs = 2;    // this needs to be a topgen populated number, or from topcfg?
-  parameter PowerDomains = 2; // this maybe needs to be a topgen populated number, or from topcfg?
+  parameter int PowerDomains = 2; // this needs to be a topgen populated number, or from topcfg?
 
   // variables referenced only by pwrmgr
-  localparam WakeUpPeris = 16; // this needs to be a topgen populated number, or from topcfg?
-  localparam TotalWakeWidth = WakeUpPeris + 2; // Abort and fall through are added
+  localparam int TotalWakeWidth = pwrmgr_reg_pkg::NumWkups + 2; // Abort and fall through are added
 
+  // The following structs should eventually be relocted to other modules
+  typedef enum logic [1:0] {
+    DiffValid = 2'b10,
+    DiffInvalid = 2'b01
+  } pwrmgr_diff_e;
 
   // pwrmgr to ast
   typedef struct packed {
@@ -26,27 +29,31 @@ package pwrmgr_pkg;
     logic slow_clk_en;
     logic core_clk_en;
     logic io_clk_en;
+    logic usb_clk_en;
   } pwr_ast_req_t;
 
   typedef struct packed {
-    logic [1:0] slow_clk_val;
-    logic [1:0] core_clk_val;
-    logic [1:0] io_clk_val;
+    pwrmgr_diff_e slow_clk_val;
+    pwrmgr_diff_e core_clk_val;
+    pwrmgr_diff_e io_clk_val;
+    pwrmgr_diff_e usb_clk_val;
     logic main_pok;
   } pwr_ast_rsp_t;
 
   // default value of pwr_ast_rsp (for dangling ports)
   parameter pwr_ast_rsp_t PWR_AST_RSP_DEFAULT = '{
-    slow_clk_val: 2'b10,
-    core_clk_val: 2'b10,
-    io_clk_val: 2'b10,
+    slow_clk_val: DiffValid,
+    core_clk_val: DiffValid,
+    io_clk_val: DiffValid,
+    usb_clk_val: DiffValid,
     main_pok: 1'b1
   };
 
   parameter pwr_ast_rsp_t PWR_AST_RSP_SYNC_DEFAULT = '{
-    slow_clk_val: 2'b01,
-    core_clk_val: 2'b01,
-    io_clk_val: 2'b10,
+    slow_clk_val: DiffInvalid,
+    core_clk_val: DiffInvalid,
+    io_clk_val: DiffInvalid,
+    usb_clk_val: DiffInvalid,
     main_pok: 1'b0
   };
 
@@ -62,6 +69,7 @@ package pwrmgr_pkg;
   typedef struct packed {
     logic [PowerDomains-1:0] rst_lc_req;
     logic [PowerDomains-1:0] rst_sys_req;
+    logic [pwrmgr_reg_pkg::NumRstReqs:0] rstreqs;
     reset_cause_e reset_cause;
   } pwr_rst_req_t;
 
@@ -81,6 +89,11 @@ package pwrmgr_pkg;
   typedef struct packed {
     logic ip_clk_en;
   } pwr_clk_req_t;
+
+  // clkmgr to powrmgr
+  typedef struct packed {
+    logic clk_status;
+  } pwr_clk_rsp_t;
 
   // pwrmgr to otp
   typedef struct packed {
@@ -118,11 +131,21 @@ package pwrmgr_pkg;
 
   // flash to pwrmgr
   typedef struct packed {
+    logic flash_init;
+  } pwr_flash_req_t;
+
+  typedef struct packed {
+    logic flash_done;
     logic flash_idle;
-  } pwr_flash_t;
+  } pwr_flash_rsp_t;
 
   // default value (for dangling ports)
-  parameter pwr_flash_t PWR_FLASH_DEFAULT = '{
+  parameter pwr_flash_req_t PWR_FLASH_REQ_DEFAULT = '{
+    flash_init: 1'b1
+  };
+
+  parameter pwr_flash_rsp_t PWR_FLASH_RSP_DEFAULT = '{
+    flash_done: 1'b1,
     flash_idle: 1'b1
   };
 
@@ -136,21 +159,16 @@ package pwrmgr_pkg;
     core_sleeping: 1'b0
   };
 
-  // peripherals to pwrmgr
-  // TODO, switch this to two logic arrays once the option to support
-  // logic during intermodule.py is in.
-  // Structs are used for now since these happen to support dangling port
-  // defaults.
-  typedef struct packed {
-    logic [WakeUpPeris-1:0] wakeups;
-    logic [HwRstReqs-1:0] rstreqs;
-  } pwr_peri_t;
-
   // default value (for dangling ports)
-  parameter pwr_peri_t PWR_PERI_DEFAULT = '{
-    wakeups: WakeUpPeris'(1'b1),
-    rstreqs: '0
-  };
+  parameter int WAKEUPS_DEFAULT = '0;
+  parameter int RSTREQS_DEFAULT = '0;
+
+  // peripherals to pwrmgr
+  typedef struct packed {
+    logic [pwrmgr_reg_pkg::NumWkups-1:0] wakeups;
+    // reset requests include external requests + escalation reset
+    logic [pwrmgr_reg_pkg::NumRstReqs:0] rstreqs;
+  } pwr_peri_t;
 
   // power-up causes
   typedef enum logic [1:0] {
@@ -165,5 +183,36 @@ package pwrmgr_pkg;
     LowPower = 1'b1
   } low_power_hint_e;
 
+  // fast fsm state enum
+  typedef enum logic [4:0] {
+    FastPwrStateLowPower,
+    FastPwrStateEnableClocks,
+    FastPwrStateReleaseLcRst,
+    FastPwrStateOtpInit,
+    FastPwrStateLcInit,
+    FastPwrStateFlashInit,
+    FastPwrStateAckPwrUp,
+    FastPwrStateActive,
+    FastPwrStateDisClks,
+    FastPwrStateFallThrough,
+    FastPwrStateNvmIdleChk,
+    FastPwrStateLowPowerPrep,
+    FastPwrStateNvmShutDown,
+    FastPwrStateResetPrep,
+    FastPwrStateReqPwrDn
+  } fast_pwr_state_e;
+
+  // slow fsm state enum
+  typedef enum logic [3:0] {
+    SlowPwrStateReset,
+    SlowPwrStateLowPower,
+    SlowPwrStateMainPowerOn,
+    SlowPwrStateClocksOn,
+    SlowPwrStateReqPwrUp,
+    SlowPwrStateIdle,
+    SlowPwrStateAckPwrDn,
+    SlowPwrStateClocksOff,
+    SlowPwrStateMainPowerOff
+  } slow_pwr_state_e;
 
 endpackage // pwrmgr_pkg

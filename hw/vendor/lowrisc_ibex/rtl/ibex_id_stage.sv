@@ -17,17 +17,18 @@
 `include "prim_assert.sv"
 
 module ibex_id_stage #(
-    parameter bit RV32E           = 0,
-    parameter bit RV32M           = 1,
-    parameter bit RV32B           = 0,
-    parameter bit DataIndTiming   = 1'b0,
-    parameter bit BranchTargetALU = 0,
-    parameter bit WritebackStage  = 0
+    parameter bit               RV32E           = 0,
+    parameter ibex_pkg::rv32m_e RV32M           = ibex_pkg::RV32MFast,
+    parameter ibex_pkg::rv32b_e RV32B           = ibex_pkg::RV32BNone,
+    parameter bit               DataIndTiming   = 1'b0,
+    parameter bit               BranchTargetALU = 0,
+    parameter bit               SpecBranch      = 0,
+    parameter bit               WritebackStage  = 0,
+    parameter bit               BranchPredictor = 0
 ) (
     input  logic                      clk_i,
     input  logic                      rst_ni,
 
-    input  logic                      fetch_enable_i,
     output logic                      ctrl_busy_o,
     output logic                      illegal_insn_o,
 
@@ -37,6 +38,7 @@ module ibex_id_stage #(
     input  logic [31:0]               instr_rdata_alu_i,     // from IF-ID pipeline registers
     input  logic [15:0]               instr_rdata_c_i,       // from IF-ID pipeline registers
     input  logic                      instr_is_compressed_i,
+    input  logic                      instr_bp_taken_i,
     output logic                      instr_req_o,
     output logic                      instr_first_cycle_id_o,
     output logic                      instr_valid_clear_o,   // kill instr in IF-ID reg
@@ -48,7 +50,9 @@ module ibex_id_stage #(
 
     // IF and ID stage signals
     output logic                      pc_set_o,
+    output logic                      pc_set_spec_o,
     output ibex_pkg::pc_sel_e         pc_mux_o,
+    output logic                      nt_branch_mispredict_o,
     output ibex_pkg::exc_pc_sel_e     exc_pc_mux_o,
     output ibex_pkg::exc_cause_e      exc_cause_o,
 
@@ -59,19 +63,17 @@ module ibex_id_stage #(
     input  logic [31:0]               pc_id_i,
 
     // Stalls
-    input  logic                      ex_valid_i,     // EX stage has valid output
-    input  logic                      lsu_valid_i,    // LSU has valid output, or is done
-    input  logic                      lsu_load_i,     // LSU is performing a load
-    input  logic                      lsu_busy_i,     // LSU is busy
+    input  logic                      ex_valid_i,       // EX stage has valid output
+    input  logic                      lsu_resp_valid_i, // LSU has valid output, or is done
     // ALU
     output ibex_pkg::alu_op_e         alu_operator_ex_o,
     output logic [31:0]               alu_operand_a_ex_o,
     output logic [31:0]               alu_operand_b_ex_o,
 
     // Multicycle Operation Stage Register
-    input  logic                      imd_val_we_ex_i,
-    input  logic [33:0]               imd_val_d_ex_i,
-    output logic [33:0]               imd_val_q_ex_o,
+    input  logic [1:0]                imd_val_we_ex_i,
+    input  logic [33:0]               imd_val_d_ex_i[2],
+    output logic [33:0]               imd_val_q_ex_o[2],
 
     // Branch target ALU
     output logic [31:0]               bt_a_operand_o,
@@ -80,7 +82,8 @@ module ibex_id_stage #(
     // MUL, DIV
     output logic                      mult_en_ex_o,
     output logic                      div_en_ex_o,
-    output logic                      multdiv_sel_ex_o,
+    output logic                      mult_sel_ex_o,
+    output logic                      div_sel_ex_o,
     output ibex_pkg::md_op_e          multdiv_operator_ex_o,
     output logic  [1:0]               multdiv_signed_mode_ex_o,
     output logic [31:0]               multdiv_operand_a_ex_o,
@@ -147,11 +150,15 @@ module ibex_id_stage #(
     input  logic [31:0]               rf_rdata_a_i,
     output logic [4:0]                rf_raddr_b_o,
     input  logic [31:0]               rf_rdata_b_i,
+    output logic                      rf_ren_a_o,
+    output logic                      rf_ren_b_o,
 
     // Register file write (via writeback)
     output logic [4:0]                rf_waddr_id_o,
     output logic [31:0]               rf_wdata_id_o,
     output logic                      rf_we_id_o,
+    output logic                      rf_rd_a_wb_match_o,
+    output logic                      rf_rd_b_wb_match_o,
 
     // Register write information from writeback (for resolving data hazards)
     input  logic [4:0]                rf_waddr_wb_i,
@@ -189,9 +196,12 @@ module ibex_id_stage #(
   logic        wb_exception;
 
   logic        branch_in_dec;
+  logic        branch_spec, branch_set_spec;
   logic        branch_set, branch_set_d;
+  logic        branch_not_set;
   logic        branch_taken;
   logic        jump_in_dec;
+  logic        jump_set_dec;
   logic        jump_set;
 
   logic        instr_first_cycle;
@@ -225,6 +235,9 @@ module ibex_id_stage #(
   logic        rf_we_dec, rf_we_raw;
   logic        rf_ren_a, rf_ren_b;
 
+  assign rf_ren_a_o = rf_ren_a;
+  assign rf_ren_b_o = rf_ren_b;
+
   logic [31:0] rf_rdata_a_fwd;
   logic [31:0] rf_rdata_b_fwd;
 
@@ -235,7 +248,7 @@ module ibex_id_stage #(
   logic        alu_multicycle_dec;
   logic        stall_alu;
 
-  logic [33:0] imd_val_q;
+  logic [33:0] imd_val_q[2];
 
   op_a_sel_e   bt_a_mux_sel;
   imm_b_sel_e  bt_b_mux_sel;
@@ -246,7 +259,6 @@ module ibex_id_stage #(
   // Multiplier Control
   logic        mult_en_id, mult_en_dec; // use integer multiplier
   logic        div_en_id, div_en_dec;   // use integer division or reminder
-  logic        multdiv_sel_dec;
   logic        multdiv_en_dec;
   md_op_e      multdiv_operator;
   logic [1:0]  multdiv_signed_mode;
@@ -323,6 +335,12 @@ module ibex_id_stage #(
         default:         imm_b = 32'h4;
       endcase
     end
+    `ASSERT(IbexImmBMuxSelValid, instr_valid_i |-> imm_b_mux_sel inside {
+        IMM_B_I,
+        IMM_B_S,
+        IMM_B_U,
+        IMM_B_INCR_PC,
+        IMM_B_INCR_ADDR})
   end else begin : g_nobtalu
     op_a_sel_e  unused_a_mux_sel;
     imm_b_sel_e unused_b_mux_sel;
@@ -345,6 +363,14 @@ module ibex_id_stage #(
         default:         imm_b = 32'h4;
       endcase
     end
+    `ASSERT(IbexImmBMuxSelValid, instr_valid_i |-> imm_b_mux_sel inside {
+        IMM_B_I,
+        IMM_B_S,
+        IMM_B_B,
+        IMM_B_U,
+        IMM_B_J,
+        IMM_B_INCR_PC,
+        IMM_B_INCR_ADDR})
   end
 
   // ALU MUX for Operand B
@@ -354,11 +380,13 @@ module ibex_id_stage #(
   // Multicycle Operation Stage Register //
   /////////////////////////////////////////
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin : intermediate_val_reg
-    if (!rst_ni) begin
-      imd_val_q <= '0;
-    end else if (imd_val_we_ex_i) begin
-      imd_val_q <= imd_val_d_ex_i;
+  for (genvar i=0; i<2; i++) begin : gen_intermediate_val_reg
+    always_ff @(posedge clk_i or negedge rst_ni) begin : intermediate_val_reg
+      if (!rst_ni) begin
+        imd_val_q[i] <= '0;
+      end else if (imd_val_we_ex_i[i]) begin
+        imd_val_q[i] <= imd_val_d_ex_i[i];
+      end
     end
   end
 
@@ -377,7 +405,7 @@ module ibex_id_stage #(
       RF_WD_EX:  rf_wdata_id_o = result_ex_i;
       RF_WD_CSR: rf_wdata_id_o = csr_rdata_i;
       default:   rf_wdata_id_o = result_ex_i;
-    endcase;
+    endcase
   end
 
   /////////////
@@ -400,7 +428,7 @@ module ibex_id_stage #(
       .dret_insn_o                     ( dret_insn_dec        ),
       .ecall_insn_o                    ( ecall_insn_dec       ),
       .wfi_insn_o                      ( wfi_insn_dec         ),
-      .jump_set_o                      ( jump_set             ),
+      .jump_set_o                      ( jump_set_dec         ),
       .branch_taken_i                  ( branch_taken         ),
       .icache_inval_o                  ( icache_inval_o       ),
 
@@ -442,7 +470,8 @@ module ibex_id_stage #(
       // MULT & DIV
       .mult_en_o                       ( mult_en_dec          ),
       .div_en_o                        ( div_en_dec           ),
-      .multdiv_sel_o                   ( multdiv_sel_dec      ),
+      .mult_sel_o                      ( mult_sel_ex_o        ),
+      .div_sel_o                       ( div_sel_ex_o         ),
       .multdiv_operator_o              ( multdiv_operator     ),
       .multdiv_signed_mode_o           ( multdiv_signed_mode  ),
 
@@ -494,12 +523,12 @@ module ibex_id_stage #(
   assign illegal_insn_o = instr_valid_i & (illegal_insn_dec | illegal_csr_insn_i);
 
   ibex_controller #(
-    .WritebackStage ( WritebackStage )
+    .WritebackStage  ( WritebackStage  ),
+    .BranchPredictor ( BranchPredictor )
   ) controller_i (
       .clk_i                          ( clk_i                   ),
       .rst_ni                         ( rst_ni                  ),
 
-      .fetch_enable_i                 ( fetch_enable_i          ),
       .ctrl_busy_o                    ( ctrl_busy_o             ),
 
       // decoder related signals
@@ -516,6 +545,7 @@ module ibex_id_stage #(
       .instr_i                        ( instr_rdata_i           ),
       .instr_compressed_i             ( instr_rdata_c_i         ),
       .instr_is_compressed_i          ( instr_is_compressed_i   ),
+      .instr_bp_taken_i               ( instr_bp_taken_i        ),
       .instr_fetch_err_i              ( instr_fetch_err_i       ),
       .instr_fetch_err_plus2_i        ( instr_fetch_err_plus2_i ),
       .pc_id_i                        ( pc_id_i                 ),
@@ -528,7 +558,9 @@ module ibex_id_stage #(
       // to prefetcher
       .instr_req_o                    ( instr_req_o             ),
       .pc_set_o                       ( pc_set_o                ),
+      .pc_set_spec_o                  ( pc_set_spec_o           ),
       .pc_mux_o                       ( pc_mux_o                ),
+      .nt_branch_mispredict_o         ( nt_branch_mispredict_o  ),
       .exc_pc_mux_o                   ( exc_pc_mux_o            ),
       .exc_cause_o                    ( exc_cause_o             ),
 
@@ -540,6 +572,8 @@ module ibex_id_stage #(
 
       // jump/branch control
       .branch_set_i                   ( branch_set              ),
+      .branch_set_spec_i              ( branch_set_spec         ),
+      .branch_not_set_i               ( branch_not_set          ),
       .jump_set_i                     ( jump_set                ),
 
       // interrupt signals
@@ -570,10 +604,10 @@ module ibex_id_stage #(
       .debug_ebreaku_i                ( debug_ebreaku_i         ),
       .trigger_match_i                ( trigger_match_i         ),
 
-      // stall signals
       .stall_id_i                     ( stall_id                ),
       .stall_wb_i                     ( stall_wb                ),
       .flush_id_o                     ( flush_id                ),
+      .ready_wb_i                     ( ready_wb_i              ),
 
       // Performance Counters
       .perf_jump_o                    ( perf_jump_o             ),
@@ -603,7 +637,6 @@ module ibex_id_stage #(
 
   assign mult_en_ex_o                = mult_en_id;
   assign div_en_ex_o                 = div_en_id;
-  assign multdiv_sel_ex_o            = multdiv_sel_dec;
 
   assign multdiv_operator_ex_o       = multdiv_operator;
   assign multdiv_signed_mode_ex_o    = multdiv_signed_mode;
@@ -617,7 +650,8 @@ module ibex_id_stage #(
   if (BranchTargetALU && !DataIndTiming) begin : g_branch_set_direct
     // Branch set fed straight to controller with branch target ALU
     // (condition pass/fail used same cycle as generated instruction request)
-    assign branch_set = branch_set_d;
+    assign branch_set      = branch_set_d;
+    assign branch_set_spec = branch_spec;
   end else begin : g_branch_set_flop
     // Branch set flopped without branch target ALU, or in fixed time execution mode
     // (condition pass/fail used next cycle where branch target is calculated)
@@ -634,7 +668,9 @@ module ibex_id_stage #(
     // Branches always take two cycles in fixed time execution mode, with or without the branch
     // target ALU (to avoid a path from the branch decision into the branch target ALU operand
     // muxing).
-    assign branch_set = (BranchTargetALU && !data_ind_timing_i) ? branch_set_d : branch_set_q;
+    assign branch_set      = (BranchTargetALU && !data_ind_timing_i) ? branch_set_d : branch_set_q;
+    // Use the speculative branch signal when BTALU is enabled
+    assign branch_set_spec = (BranchTargetALU && !data_ind_timing_i) ? branch_spec : branch_set_q;
   end
 
   // Branch condition is calculated in the first cycle and flopped for use in the second cycle
@@ -659,10 +695,11 @@ module ibex_id_stage #(
 
   end
 
-  // Holding branch_set/jump_set high for more than one cycle may not cause a functional issue but
-  // could generate needless prefetch buffer flushes and instruction fetches. ID/EX is designed such
-  // that this shouldn't ever happen.
-  `ASSERT(NeverDoubleBranch, branch_set |=> ~branch_set)
+  // Holding branch_set/jump_set high for more than one cycle should not cause a functional issue.
+  // However it could generate needless prefetch buffer flushes and instruction fetches. The ID/EX
+  // designs ensures that this never happens for non-predicted branches.
+  `ASSERT(NeverDoubleBranch, branch_set & ~instr_bp_taken_i |=> ~branch_set)
+  `ASSERT(NeverDoubleJump, jump_set & ~instr_bp_taken_i |=> ~jump_set)
 
   ///////////////
   // ID-EX FSM //
@@ -692,6 +729,9 @@ module ibex_id_stage #(
     stall_branch            = 1'b0;
     stall_alu               = 1'b0;
     branch_set_d            = 1'b0;
+    branch_spec             = 1'b0;
+    branch_not_set          = 1'b0;
+    jump_set                = 1'b0;
     perf_branch_o           = 1'b0;
 
     if (instr_executing) begin
@@ -726,6 +766,13 @@ module ibex_id_stage #(
                                   MULTI_CYCLE : FIRST_CYCLE;
               stall_branch  = (~BranchTargetALU & branch_decision_i) | data_ind_timing_i;
               branch_set_d  = branch_decision_i | data_ind_timing_i;
+
+              if (BranchPredictor) begin
+                branch_not_set = ~branch_decision_i;
+              end
+
+              // Speculative branch (excludes branch_decision_i)
+              branch_spec   = SpecBranch ? 1'b1 : branch_decision_i;
               perf_branch_o = 1'b1;
             end
             jump_in_dec: begin
@@ -733,6 +780,7 @@ module ibex_id_stage #(
               // BTALU means jumps only need one cycle
               id_fsm_d      = BranchTargetALU ? FIRST_CYCLE : MULTI_CYCLE;
               stall_jump    = ~BranchTargetALU;
+              jump_set      = jump_set_dec;
             end
             alu_multicycle_dec: begin
               stall_alu     = 1'b1;
@@ -777,12 +825,6 @@ module ibex_id_stage #(
 
   assign instr_done = ~stall_id & ~flush_id & instr_executing;
 
-  if (WritebackStage) begin
-    assign multicycle_done = lsu_req_dec ? ~stall_mem : ex_valid_i;
-  end else begin
-    assign multicycle_done = lsu_req_dec ? lsu_valid_i : ex_valid_i;
-  end
-
   // Signal instruction in ID is in it's first cycle. It can remain in its
   // first cycle if it is stalled.
   assign instr_first_cycle      = instr_valid_i & (id_fsm_q == FIRST_CYCLE);
@@ -791,8 +833,6 @@ module ibex_id_stage #(
   assign instr_first_cycle_id_o = instr_first_cycle;
 
   if (WritebackStage) begin : gen_stall_mem
-    logic unused_lsu_busy;
-
     // Register read address matches write address in WB
     logic rf_rd_a_wb_match;
     logic rf_rd_b_wb_match;
@@ -800,33 +840,18 @@ module ibex_id_stage #(
     logic rf_rd_a_hz;
     logic rf_rd_b_hz;
 
-    logic data_req_complete_d;
-    logic data_req_complete_q;
-
     logic outstanding_memory_access;
 
     logic instr_kill;
 
-    assign unused_lsu_busy = lsu_busy_i;
-
-    assign data_req_complete_d =
-      (data_req_complete_q | (lsu_req & lsu_req_done_i)) & ~instr_id_done_o;
-
-    always_ff @(posedge clk_i or negedge rst_ni) begin
-      if (~rst_ni) begin
-        data_req_complete_q   <= 1'b0;
-      end else begin
-        data_req_complete_q   <= data_req_complete_d;
-      end
-    end
+    assign multicycle_done = lsu_req_dec ? ~stall_mem : ex_valid_i;
 
     // Is a memory access ongoing that isn't finishing this cycle
     assign outstanding_memory_access = (outstanding_load_wb_i | outstanding_store_wb_i) &
-                                       ~lsu_valid_i;
+                                       ~lsu_resp_valid_i;
 
     // Can start a new memory access if any previous one has finished or is finishing
-    // Don't start a new memory access if this instruction has already done it's request
-    assign data_req_allowed = ~outstanding_memory_access & ~data_req_complete_q;
+    assign data_req_allowed = ~outstanding_memory_access;
 
     // Instruction won't execute because:
     // - There is a pending exception in writeback
@@ -857,15 +882,23 @@ module ibex_id_stage #(
       instr_valid_i & ~instr_kill & ~instr_executing |-> stall_id)
 
     // Stall for reasons related to memory:
-    // * Requested by LSU (load/store in ID/EX needs to be held in ID/EX whilst a data request or
-    //   granted or the second half of a misaligned access is sent out)
-    // * LSU access required but data requests aren't currently allowed
     // * There is an outstanding memory access that won't resolve this cycle (need to wait to allow
     //   precise exceptions)
-    assign stall_mem = instr_valid_i & ((lsu_req_dec & (~data_req_allowed | (~data_req_complete_q & ~lsu_req_done_i))) | outstanding_memory_access);
+    // * There is a load/store request not being granted or which is unaligned and waiting to issue
+    //   a second request (needs to stay in ID for the address calculation)
+    assign stall_mem = instr_valid_i &
+                       (outstanding_memory_access | (lsu_req_dec & ~lsu_req_done_i));
+
+    // If we stall a load in ID for any reason, it must not make an LSU request
+    // (otherwide we might issue two requests for the same instruction)
+    `ASSERT(IbexStallMemNoRequest,
+      instr_valid_i & lsu_req_dec & ~instr_done |-> ~lsu_req_done_i)
 
     assign rf_rd_a_wb_match = (rf_waddr_wb_i == rf_raddr_a_o) & |rf_raddr_a_o;
     assign rf_rd_b_wb_match = (rf_waddr_wb_i == rf_raddr_b_o) & |rf_raddr_b_o;
+
+    assign rf_rd_a_wb_match_o = rf_rd_a_wb_match;
+    assign rf_rd_b_wb_match_o = rf_rd_b_wb_match;
 
     // If instruction is reading register that load will be writing stall in
     // ID until load is complete. No need to stall when reading zero register.
@@ -878,7 +911,7 @@ module ibex_id_stage #(
     assign rf_rdata_a_fwd = rf_rd_a_wb_match & rf_write_wb_i ? rf_wdata_fwd_wb_i : rf_rdata_a_i;
     assign rf_rdata_b_fwd = rf_rd_b_wb_match & rf_write_wb_i ? rf_wdata_fwd_wb_i : rf_rdata_b_i;
 
-    assign stall_ld_hz = outstanding_load_wb_i & lsu_load_i & (rf_rd_a_hz | rf_rd_b_hz) & rf_write_wb_i;
+    assign stall_ld_hz = outstanding_load_wb_i & (rf_rd_a_hz | rf_rd_b_hz);
 
     assign instr_type_wb_o = ~lsu_req_dec ? WB_INSTR_OTHER :
                               lsu_we      ? WB_INSTR_STORE :
@@ -891,17 +924,20 @@ module ibex_id_stage #(
     // Stall ID/EX as instruction in ID/EX cannot proceed to writeback yet
     assign stall_wb = en_wb_o & ~ready_wb_i;
 
-    assign perf_dside_wait_o = instr_valid_i & ~instr_kill & (outstanding_memory_access | stall_ld_hz);
-  end else begin
+    assign perf_dside_wait_o = instr_valid_i & ~instr_kill &
+                               (outstanding_memory_access | stall_ld_hz);
+  end else begin : gen_no_stall_mem
+
+    assign multicycle_done = lsu_req_dec ? lsu_resp_valid_i : ex_valid_i;
 
     assign data_req_allowed = instr_first_cycle;
 
     // Without Writeback Stage always stall the first cycle of a load/store.
     // Then stall until it is complete
-    assign stall_mem = instr_valid_i & (lsu_busy_i | (lsu_req_dec & (~lsu_valid_i | instr_first_cycle)));
+    assign stall_mem = instr_valid_i & (lsu_req_dec & (~lsu_resp_valid_i | instr_first_cycle));
 
     // No load hazards without Writeback Stage
-    assign stall_ld_hz = 1'b0;
+    assign stall_ld_hz   = 1'b0;
 
     // Without writeback stage any valid instruction that hasn't seen an error will execute
     assign instr_executing = instr_valid_i & ~instr_fetch_err_i & controller_run;
@@ -914,34 +950,32 @@ module ibex_id_stage #(
     assign rf_rdata_a_fwd = rf_rdata_a_i;
     assign rf_rdata_b_fwd = rf_rdata_b_i;
 
+    assign rf_rd_a_wb_match_o = 1'b0;
+    assign rf_rd_b_wb_match_o = 1'b0;
+
     // Unused Writeback stage only IO & wiring
     // Assign inputs and internal wiring to unused signals to satisfy lint checks
     // Tie-off outputs to constant values
     logic unused_data_req_done_ex;
-    logic unused_lsu_load;
     logic [4:0] unused_rf_waddr_wb;
     logic unused_rf_write_wb;
     logic unused_outstanding_load_wb;
     logic unused_outstanding_store_wb;
     logic unused_wb_exception;
-    logic unused_rf_ren_a, unused_rf_ren_b;
     logic [31:0] unused_rf_wdata_fwd_wb;
 
     assign unused_data_req_done_ex     = lsu_req_done_i;
-    assign unused_lsu_load             = lsu_load_i;
     assign unused_rf_waddr_wb          = rf_waddr_wb_i;
     assign unused_rf_write_wb          = rf_write_wb_i;
     assign unused_outstanding_load_wb  = outstanding_load_wb_i;
     assign unused_outstanding_store_wb = outstanding_store_wb_i;
     assign unused_wb_exception         = wb_exception;
-    assign unused_rf_ren_a             = rf_ren_a;
-    assign unused_rf_ren_b             = rf_ren_b;
     assign unused_rf_wdata_fwd_wb      = rf_wdata_fwd_wb_i;
 
     assign instr_type_wb_o = WB_INSTR_OTHER;
     assign stall_wb        = 1'b0;
 
-    assign perf_dside_wait_o = instr_executing & lsu_req_dec & ~lsu_valid_i;
+    assign perf_dside_wait_o = instr_executing & lsu_req_dec & ~lsu_resp_valid_i;
 
     assign en_wb_o         = 1'b0;
     assign instr_id_done_o = instr_done;
@@ -963,23 +997,6 @@ module ibex_id_stage #(
       OP_A_FWD,
       OP_A_CURRPC,
       OP_A_IMM})
-  if (BranchTargetALU) begin : g_btalu_assertions
-    `ASSERT(IbexImmBMuxSelValid, instr_valid_i |-> imm_b_mux_sel inside {
-        IMM_B_I,
-        IMM_B_S,
-        IMM_B_U,
-        IMM_B_INCR_PC,
-        IMM_B_INCR_ADDR})
-  end else begin : g_nobtalu_assertions
-    `ASSERT(IbexImmBMuxSelValid, instr_valid_i |-> imm_b_mux_sel inside {
-        IMM_B_I,
-        IMM_B_S,
-        IMM_B_B,
-        IMM_B_U,
-        IMM_B_J,
-        IMM_B_INCR_PC,
-        IMM_B_INCR_ADDR})
-  end
   `ASSERT_KNOWN_IF(IbexBTAluAOpMuxSelKnown, bt_a_mux_sel, instr_valid_i)
   `ASSERT(IbexBTAluAOpMuxSelValid, instr_valid_i |-> bt_a_mux_sel inside {
       OP_A_REG_A,
@@ -996,7 +1013,8 @@ module ibex_id_stage #(
   `ASSERT_KNOWN(IbexWbStateKnown, id_fsm_q)
 
   // Branch decision must be valid when jumping.
-  `ASSERT_KNOWN_IF(IbexBranchDecisionValid, branch_decision_i, instr_valid_i)
+  `ASSERT_KNOWN_IF(IbexBranchDecisionValid, branch_decision_i,
+      instr_valid_i && !(illegal_csr_insn_i || instr_fetch_err_i))
 
   // Instruction delivered to ID stage can not contain X.
   `ASSERT_KNOWN_IF(IbexIdInstrKnown, instr_rdata_i,

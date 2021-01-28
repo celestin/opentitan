@@ -29,13 +29,6 @@ package uart_agent_pkg;
     BaudRate2Mbps   = 2097152
   } baud_rate_e;
 
-  typedef enum {
-    UartIdle,
-    UartStart,
-    UartData,
-    UartStop
-  } uart_state_e;
-
   // functions
   function automatic real get_baud_rate_period_ns(baud_rate_e baud_rate);
     // return 10^9 / baud_rate ns upto 3 decimal places
@@ -45,6 +38,7 @@ package uart_agent_pkg;
       BaudRate230400: return 4340.278;
       BaudRate1Mbps : return 953.674;
       BaudRate2Mbps : return 476.837;
+      default: `uvm_fatal("uart_agent_pkg", {"Unsupported baud_rate: ", baud_rate.name})
     endcase
   endfunction
 

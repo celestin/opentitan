@@ -324,10 +324,7 @@ which lists the total number of assertions and the number of proven, vacuous,
 covered and failing assertions for each block. CRASH identifies modules that
 fail to run VC Formal.
 
-...
-```
-
-## Naming Convenctions
+## Naming Conventions
 For assertions, it is preferred to use postfix `_A` for assertions,
 `_M` for assumptions, `_P` for properties, and `_S` for sequences.
 For example:
@@ -340,7 +337,7 @@ For example:
 ## Implementation Guidelines
 The recommended guidelines for where to implement assertions are as follows:
 * Basic assertions should be implemented directly in the RTL file. These basic
-  functional assertions are often inserted by designers to act as a sanity
+  functional assertions are often inserted by designers to act as a smoke
   check.
 * Assertions used for the testbench to achieve verification goals should be
   implemented under the `ip/hw/module_name/fpv/vip` folder. This FPV environment

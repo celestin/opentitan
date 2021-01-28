@@ -14,20 +14,34 @@
 # TODO: integrate this with Fusesoc and the other linting flows.
 
 NUM_PROCS=8
-REPORT_FILE="verible-style-format.rpt"
+REPORT_FILE="verible-format.rpt"
+VERIBLE_VERSION=`verible-verilog-format --version`
+VERIBLE_ARGS="--formal_parameters_indentation=indent \
+              --named_parameter_indentation=indent   \
+              --named_port_indentation=indent        \
+              --port_declarations_indentation=indent \
+              --inplace"
+
+if [ -z $VERIBLE_VERSION ]; then
+    echo "verible-verilog-format either not installed or not visible in PATH"
+    exit 1
+fi
 
 # this is a precaution in order to prevent accidental
 # overwriting of uncomitted changes
 git add -u
 
 # get all system verilog files and pipe through style formatter
-find hw/{ip,vendor,top_earlgrey} -type f -name "*.sv" -o -name "*.svh" | \
-    xargs -n 1 -P $NUM_PROCS /tools/verible/verilog_format               \
-    --inplace
+find . -type f -name "*.sv" -o -name "*.svh" |                           \
+    xargs -n 1 -P $NUM_PROCS verible-verilog-format                      \
+    $VERIBLE_ARGS
+
+
+echo "Usign verible-verilog-format version $VERIBLE_VERSION" > $REPORT_FILE
 
 # report changed files
 git status                  | \
     grep modified           | \
     grep dv                 | \
     awk -F ' ' '{print $2}' | \
-    tee $REPORT_FILE
+    tee -a $REPORT_FILE

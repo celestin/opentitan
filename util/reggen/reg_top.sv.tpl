@@ -7,13 +7,12 @@
   num_wins = len(block.wins)
   num_wins_width = ((num_wins+1).bit_length()) - 1
   num_dsp  = num_wins + 1
-  params = [p for p in block.params if p["local"] == "false"]
   max_regs_char = len("{}".format(block.get_n_regs_flat()-1))
   regs_flat = block.get_regs_flat()
 %>
 `include "prim_assert.sv"
 
-module ${block.name}_reg_top ${print_param(params)}(
+module ${block.name}_reg_top (
   input clk_i,
   input rst_ni,
 
@@ -97,7 +96,7 @@ module ${block.name}_reg_top ${print_param(params)}(
     .tl_h_o (tl_o),
     .tl_d_o (tl_socket_h2d),
     .tl_d_i (tl_socket_d2h),
-    .dev_select (reg_steer)
+    .dev_select_i (reg_steer)
   );
 
   // Create steering logic
@@ -154,8 +153,9 @@ module ${block.name}_reg_top ${print_param(params)}(
       swrdaccess = f.swrdaccess
       hwext = r.hwext
       regwen = r.regwen
+      shadowed = r.shadowed
 %>\
-${sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen)}\
+${sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen, shadowed)}\
     % else:
       % for f in r.fields:
 <%
@@ -166,8 +166,9 @@ ${sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen)}\
       swrdaccess = f.swrdaccess
       hwext = r.hwext
       regwen = r.regwen
+      shadowed = r.shadowed
 %>\
-${sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen)}\
+${sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen, shadowed)}\
       % endfor
     % endif
   % endfor
@@ -199,9 +200,10 @@ ${sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen)}\
           hwext = sr.hwext
           resval = f.resval
           regwen = sr.regwen
+          shadowed = sr.shadowed
           k = k + 1
 %>
-${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen)}
+${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen, shadowed)}
         % else:
           % for f in sr.fields:
 <%
@@ -222,9 +224,10 @@ ${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, h
             hwext = sr.hwext
             resval = f.resval
             regwen = sr.regwen
+            shadowed = sr.shadowed
 %>
   // F[${f.name}]: ${f.msb}:${f.lsb}
-${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen)}
+${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen, shadowed)}
           % endfor
 <%
           if not r.ishomog:
@@ -251,8 +254,9 @@ ${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, h
         hwext = r.hwext
         resval = f.resval
         regwen = r.regwen
+        shadowed = r.shadowed
 %>
-${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen)}
+${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen, shadowed)}
 ######################## register with multiple fields ###########################
     % else:
   // R[${r.name}]: V(${str(r.hwext)})
@@ -271,9 +275,10 @@ ${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, h
         hwext = r.hwext
         resval = f.resval
         regwen = r.regwen
+        shadowed = r.shadowed
 %>
   //   F[${f.name}]: ${f.msb}:${f.lsb}
-${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen)}
+${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen, shadowed)}
       % endfor
     % endif
 
@@ -310,8 +315,9 @@ ${finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, h
       swrdaccess = f.swrdaccess
       swwraccess = f.swwraccess
       hwext = r.hwext
+      shadowed = r.shadowed
 %>
-${we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, i)}\
+${we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, shadowed, i)}\
     % else:
       % for f in r.fields:
 <%
@@ -322,8 +328,9 @@ ${we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, i)}\
       swrdaccess = f.swrdaccess
       swwraccess = f.swwraccess
       hwext = r.hwext
+      shadowed = r.shadowed
 %>
-${we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, i)}\
+${we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, shadowed, i)}\
       % endfor
     % endif
   % endfor
@@ -393,7 +400,7 @@ ${msb}\
 [${msb-lsb}:0] \
 % endif
 </%def>\
-<%def name="sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen)">\
+<%def name="sig_gen(msb, lsb, sig_name, swwraccess, swrdaccess, hwext, regwen, shadowed)">\
   % if swrdaccess != SwRdAccess.NONE:
   logic ${str_arr_sv(msb, lsb)}${sig_name}_qs;
   % endif
@@ -401,11 +408,11 @@ ${msb}\
   logic ${str_arr_sv(msb, lsb)}${sig_name}_wd;
   logic ${sig_name}_we;
   % endif
-  % if swrdaccess != SwRdAccess.NONE and hwext:
+  % if (swrdaccess != SwRdAccess.NONE and hwext) or shadowed:
   logic ${sig_name}_re;
   % endif
 </%def>\
-<%def name="finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen)">\
+<%def name="finst_gen(finst_name, fsig_name, msb, lsb, swaccess, swrdaccess, swwraccess, hwaccess, hwqe, hwre, hwext, resval, regwen, shadowed)">\
   % if hwext:       ## if hwext, instantiate prim_subreg_ext
   prim_subreg_ext #(
     .DW    (${msb - lsb + 1})
@@ -432,7 +439,7 @@ ${msb}\
     % else:
     .d      (hw2reg.${fsig_name}.d),
     % endif
-    % if hwre:
+    % if hwre or shadowed:
     .qre    (reg2hw.${fsig_name}.re),
     % else:
     .qre    (),
@@ -454,12 +461,16 @@ ${msb}\
     .qs     ()
     % endif
   );
-  % else:       ## if not hwext, instantiate prim_subreg or constant assign
+  % else:       ## if not hwext, instantiate prim_subreg, prim_subreg_shadow or constant assign
     % if hwaccess == HwAccess.NONE and swrdaccess == SwRdAccess.RD and swwraccess == SwWrAccess.NONE:
   // constant-only read
   assign ${finst_name}_qs = ${msb-lsb+1}'h${"%x" % resval};
     % else:     ## not hwext not constant
+      % if not shadowed:
   prim_subreg #(
+      % else:
+  prim_subreg_shadow #(
+      % endif
     .DW      (${msb - lsb + 1}),
     .SWACCESS("${swaccess.name}"),
     .RESVAL  (${msb-lsb+1}'h${"%x" % resval})
@@ -467,6 +478,9 @@ ${msb}\
     .clk_i   (clk_i    ),
     .rst_ni  (rst_ni  ),
 
+      % if shadowed:
+    .re     (${finst_name}_re),
+      % endif
       % if swwraccess != SwWrAccess.NONE: ## non-RO types
         % if regwen:
     // from register interface (qualified with register enable)
@@ -503,17 +517,30 @@ ${msb}\
     .q      (reg2hw.${fsig_name}.q ),
       % endif
 
-      % if swrdaccess != SwRdAccess.NONE:
+      % if not shadowed:
+        % if swrdaccess != SwRdAccess.NONE:
     // to register interface (read)
     .qs     (${finst_name}_qs)
-      % else:
+        % else:
     .qs     ()
+        % endif
+      % else:
+        % if swrdaccess != SwRdAccess.NONE:
+    // to register interface (read)
+    .qs     (${finst_name}_qs),
+        % else:
+    .qs     (),
+        % endif
+
+    // Shadow register error conditions
+    .err_update  (reg2hw.${fsig_name}.err_update ),
+    .err_storage (reg2hw.${fsig_name}.err_storage)
       % endif
   );
     % endif  ## end non-constant prim_subreg
   % endif
 </%def>\
-<%def name="we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, idx)">\
+<%def name="we_gen(sig_name, msb, lsb, swrdaccess, swwraccess, hwext, shadowed, idx)">\
 % if swwraccess != SwWrAccess.NONE:
   % if swrdaccess != SwRdAccess.RC:
   assign ${sig_name}_we = addr_hit[${idx}] & reg_we & ~wr_err;
@@ -524,7 +551,7 @@ ${msb}\
   assign ${sig_name}_wd = '1;
   % endif
 % endif
-% if swrdaccess != SwRdAccess.NONE and hwext:
+% if (swrdaccess != SwRdAccess.NONE and hwext) or shadowed:
   assign ${sig_name}_re = addr_hit[${idx}] && reg_re;
 % endif
 </%def>\
@@ -533,15 +560,5 @@ ${msb}\
         reg_rdata_next[${str_bits_sv(msb,lsb)}] = ${sig_name}_qs;
 % else:
         reg_rdata_next[${str_bits_sv(msb,lsb)}] = '0;
-% endif
-</%def>\
-<%def name="print_param(params)">\
-<% num_params = len(params) %>\
-% if num_params != 0:
-#(
-% for i,p in enumerate(params):
-  parameter ${p["type"]} ${p["name"]} = ${p["default"]}${"," if i != num_params-1 else ""}
-% endfor
-) \
 % endif
 </%def>\

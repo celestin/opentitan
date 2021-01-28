@@ -7,7 +7,7 @@
 
 `include "prim_assert.sv"
 
-module pwrmgr_cdc import pwrmgr_pkg::*;
+module pwrmgr_cdc import pwrmgr_pkg::*; import pwrmgr_reg_pkg::*;
 (
   // Clocks and resets
   input clk_slow_i,
@@ -20,11 +20,13 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   input slow_ack_pwrdn_i,
   input slow_pwrup_cause_toggle_i,
   input pwrup_cause_e slow_pwrup_cause_i,
-  output pwrmgr_reg_pkg::pwrmgr_reg2hw_wakeup_en_reg_t slow_wakeup_en_o,
-  output pwrmgr_reg_pkg::pwrmgr_reg2hw_reset_en_reg_t slow_reset_en_o,
+  output logic [NumWkups-1:0] slow_wakeup_en_o,
+  output logic [NumRstReqs-1:0] slow_reset_en_o,
   output logic slow_main_pd_no,
   output logic slow_io_clk_en_o,
   output logic slow_core_clk_en_o,
+  output logic slow_usb_clk_en_lp_o,
+  output logic slow_usb_clk_en_active_o,
   output logic slow_req_pwrdn_o,
   output logic slow_ack_pwrup_o,
   output pwr_ast_rsp_t slow_ast_o,
@@ -35,11 +37,13 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   input req_pwrdn_i,
   input ack_pwrup_i,
   input cfg_cdc_sync_i,
-  input pwrmgr_reg_pkg::pwrmgr_reg2hw_wakeup_en_reg_t wakeup_en_i,
-  input pwrmgr_reg_pkg::pwrmgr_reg2hw_reset_en_reg_t reset_en_i,
+  input [NumWkups-1:0] wakeup_en_i,
+  input logic [NumRstReqs-1:0] reset_en_i,
   input main_pd_ni,
   input io_clk_en_i,
   input core_clk_en_i,
+  input usb_clk_en_lp_i,
+  input usb_clk_en_active_i,
   output logic ack_pwrdn_o,
   output logic req_pwrup_o,
   output pwrup_cause_e pwrup_cause_o,
@@ -48,6 +52,12 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
 
   // peripheral inputs, mixed domains
   input pwr_peri_t peri_i,
+  input pwr_flash_rsp_t flash_i,
+  output pwr_flash_rsp_t flash_o,
+
+  // otp interface
+  input  pwr_otp_rsp_t otp_i,
+  output pwr_otp_rsp_t otp_o,
 
   // AST inputs, unknown domain
   input pwr_ast_rsp_t ast_i
@@ -66,8 +76,8 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   ) i_req_pwrdn_sync (
     .clk_i(clk_slow_i),
     .rst_ni(rst_slow_ni),
-    .d(req_pwrdn_i),
-    .q(slow_req_pwrdn_o)
+    .d_i(req_pwrdn_i),
+    .q_o(slow_req_pwrdn_o)
   );
 
   prim_flop_2sync # (
@@ -75,8 +85,8 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   ) i_ack_pwrup_sync (
     .clk_i(clk_slow_i),
     .rst_ni(rst_slow_ni),
-    .d(ack_pwrup_i),
-    .q(slow_ack_pwrup_o)
+    .d_i(ack_pwrup_i),
+    .q_o(slow_ack_pwrup_o)
   );
 
   prim_pulse_sync i_slow_cdc_sync (
@@ -92,12 +102,12 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   // So there is no general concern about recombining as there is
   // no intent to use them in a related manner.
   prim_flop_2sync # (
-    .Width(HwRstReqs + WakeUpPeris)
+    .Width($bits(pwr_peri_t))
   ) i_slow_ext_req_sync (
     .clk_i  (clk_slow_i),
     .rst_ni (rst_slow_ni),
-    .d      (peri_i),
-    .q      (slow_peri_reqs_o)
+    .d_i    (peri_i),
+    .q_o    (slow_peri_reqs_o)
   );
 
 
@@ -109,8 +119,8 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   ) i_ast_sync (
     .clk_i  (clk_slow_i),
     .rst_ni (rst_slow_ni),
-    .d      (ast_i),
-    .q      (slow_ast_q)
+    .d_i    (ast_i),
+    .q_o    (slow_ast_q)
   );
 
   always_ff @(posedge clk_slow_i or negedge rst_slow_ni) begin
@@ -142,12 +152,16 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
       slow_main_pd_no <= '0;
       slow_io_clk_en_o <= '0;
       slow_core_clk_en_o <= '0;
+      slow_usb_clk_en_lp_o <= '0;
+      slow_usb_clk_en_active_o <= 1'b1;
     end else if (slow_cdc_sync) begin
       slow_wakeup_en_o <= wakeup_en_i;
       slow_reset_en_o <= reset_en_i;
       slow_main_pd_no <= main_pd_ni;
       slow_io_clk_en_o <= io_clk_en_i;
       slow_core_clk_en_o <= core_clk_en_i;
+      slow_usb_clk_en_lp_o <= usb_clk_en_lp_i;
+      slow_usb_clk_en_active_o <= usb_clk_en_active_i;
     end
   end
 
@@ -163,8 +177,8 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   ) i_req_pwrup_sync (
     .clk_i,
     .rst_ni,
-    .d(slow_req_pwrup_i),
-    .q(req_pwrup_o)
+    .d_i(slow_req_pwrup_i),
+    .q_o(req_pwrup_o)
   );
 
   prim_flop_2sync # (
@@ -172,8 +186,8 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   ) i_ack_pwrdn_sync (
     .clk_i,
     .rst_ni,
-    .d(slow_ack_pwrdn_i),
-    .q(ack_pwrdn_o)
+    .d_i(slow_ack_pwrdn_i),
+    .q_o(ack_pwrdn_o)
   );
 
   prim_flop_2sync # (
@@ -181,8 +195,8 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
   ) i_pwrup_chg_sync (
     .clk_i,
     .rst_ni,
-    .d(slow_pwrup_cause_toggle_i),
-    .q(pwrup_cause_toggle_q)
+    .d_i(slow_pwrup_cause_toggle_i),
+    .q_o(pwrup_cause_toggle_q)
   );
 
   prim_pulse_sync i_scdc_sync (
@@ -212,15 +226,46 @@ module pwrmgr_cdc import pwrmgr_pkg::*;
     end
   end
 
-  prim_flop_2sync # (
-    .Width(HwRstReqs + WakeUpPeris)
+  prim_flop_2sync #(
+    .Width($bits(pwr_peri_t))
   ) i_ext_req_sync (
     .clk_i,
     .rst_ni,
-    .d (slow_peri_reqs_masked_i),
-    .q (peri_reqs_o)
+    .d_i(slow_peri_reqs_masked_i),
+    .q_o(peri_reqs_o)
   );
 
+  // synchronize inputs from flash
+  prim_flop_2sync #(
+    .Width(1),
+    .ResetValue(1'b0)
+  ) u_sync_flash_done (
+    .clk_i,
+    .rst_ni,
+    .d_i(flash_i.flash_done),
+    .q_o(flash_o.flash_done)
+  );
+
+  prim_flop_2sync #(
+    .Width(1),
+    // TODO: Is a value of 1 correct here?
+    .ResetValue(1'b1)
+  ) u_sync_flash_idle (
+    .clk_i,
+    .rst_ni,
+    .d_i(flash_i.flash_idle),
+    .q_o(flash_o.flash_idle)
+  );
+
+  prim_flop_2sync #(
+    .Width($bits(pwr_otp_rsp_t)),
+    .ResetValue('0)
+  ) u_sync_otp (
+    .clk_i,
+    .rst_ni,
+    .d_i(otp_i),
+    .q_o(otp_o)
+  );
 
 endmodule
 
@@ -240,8 +285,8 @@ endmodule
   ) i_pwrup_sync (
     .clk_i,
     .rst_ni,
-    .d(slow_req_pwrup),
-    .q(req_pwrup)
+    .d_i(slow_req_pwrup),
+    .q_o(req_pwrup)
   );
 
   pwrmgr_cdc_pulse i_cdc_pulse (
@@ -294,7 +339,7 @@ endmodule
   ) i_pok_sync (
     .clk_i  (clk_slow_i),
     .rst_ni (rst_slow_ni),
-    .d      (pwr_ast_i),
-    .q      (slow_ast_q)
+    .d_i    (pwr_ast_i),
+    .q_o    (slow_ast_q)
   );
 */

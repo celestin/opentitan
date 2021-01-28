@@ -1,4 +1,6 @@
-# Introduction to OpenTitan
+---
+title: "Introduction to OpenTitan"
+---
 
 [OpenTitan](https://opentitan.org) is an open source silicon Root of Trust (RoT) project.
 OpenTitan will make the silicon RoT design and implementation more transparent, trustworthy, and secure for enterprises, platform providers, and chip manufacturers.
@@ -23,19 +25,4 @@ Unless otherwise noted, everything in the repository is covered by the Apache Li
 
 ## Documentation Sections
 
-* [General]({{< relref "doc" >}})
-  * Project
-  * User Guides
-  * Reference Manuals
-  * Security
-* [Hardware Dashboard]({{< relref "hw" >}})
-  * Design specifications
-  * Verification plans
-  * Results of tool-flows
-  * Comportable IPs
-  * Processor cores
-  * Top level designs
-* [Software]({{< relref "sw" >}})
-  * READMEs of OpenTitan software
-* [Tools]({{< relref "util" >}})
-  * READMEs of OpenTitan tools
+{{% sectionContent type="section" depth="1" %}}

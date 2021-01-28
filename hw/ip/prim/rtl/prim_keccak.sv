@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // prim_keccak is single round permutation module
-
+`include "prim_assert.sv"
 module prim_keccak #(
   parameter int Width = 1600, // b= {25, 50, 100, 200, 400, 800, 1600}
 
@@ -11,7 +11,7 @@ module prim_keccak #(
   localparam int W        = Width/25,
   localparam int L        = $clog2(W),
   localparam int MaxRound = 12 + 2*L, // Keccak-f only
-  localparam int RndW     = $clog2(MaxRound) // Representing up to MaxRound-1
+  localparam int RndW     = $clog2(MaxRound+1) // Representing up to MaxRound
 ) (
   input        [RndW-1:0]  rnd_i,   // Current Round
   input        [Width-1:0] s_i,
@@ -55,13 +55,13 @@ module prim_keccak #(
     '{  28,  55, 153,  21, 120},// 3
     '{  91, 276, 231, 136,  78} // 4
   };
-  for (genvar x = 0 ; x < 5 ; x++) begin : rho_x
-    for (genvar y = 0 ; y < 5 ; y++) begin : rho_y
+  for (genvar x = 0 ; x < 5 ; x++) begin : gen_rho_x
+    for (genvar y = 0 ; y < 5 ; y++) begin : gen_rho_y
       localparam int Offset = RhoOffset[x][y]%W;
       localparam int ShiftAmt = W- Offset;
-      if (Offset == 0) begin
+      if (Offset == 0) begin : gen_offset0
         assign rho_data[x][y][W-1:0] = theta_data[x][y][W-1:0];
-      end else begin
+      end else begin : gen_others
         assign rho_data[x][y][W-1:0] = {theta_data[x][y][0+:ShiftAmt],
                                         theta_data[x][y][ShiftAmt+:Offset]};
       end

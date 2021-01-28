@@ -6,6 +6,9 @@
 
 package usbuart_reg_pkg;
 
+  // Address width within the block
+  parameter int BlockAw = 6;
+
   ////////////////////////////
   // Typedefs for registers //
   ////////////////////////////
@@ -312,31 +315,31 @@ package usbuart_reg_pkg;
   // Internal design logic to register //
   ///////////////////////////////////////
   typedef struct packed {
-    usbuart_hw2reg_intr_state_reg_t intr_state; // [106:99]
-    usbuart_hw2reg_status_reg_t status; // [98:99]
-    usbuart_hw2reg_rdata_reg_t rdata; // [98:90]
-    usbuart_hw2reg_fifo_ctrl_reg_t fifo_ctrl; // [89:79]
-    usbuart_hw2reg_fifo_status_reg_t fifo_status; // [78:79]
-    usbuart_hw2reg_val_reg_t val; // [78:79]
-    usbuart_hw2reg_usbstat_reg_t usbstat; // [78:79]
-    usbuart_hw2reg_usbparam_reg_t usbparam; // [78:79]
+    usbuart_hw2reg_intr_state_reg_t intr_state; // [106:91]
+    usbuart_hw2reg_status_reg_t status; // [90:85]
+    usbuart_hw2reg_rdata_reg_t rdata; // [84:77]
+    usbuart_hw2reg_fifo_ctrl_reg_t fifo_ctrl; // [76:66]
+    usbuart_hw2reg_fifo_status_reg_t fifo_status; // [65:54]
+    usbuart_hw2reg_val_reg_t val; // [53:38]
+    usbuart_hw2reg_usbstat_reg_t usbstat; // [37:18]
+    usbuart_hw2reg_usbparam_reg_t usbparam; // [17:0]
   } usbuart_hw2reg_t;
 
   // Register Address
-  parameter logic [5:0] USBUART_INTR_STATE_OFFSET = 6'h 0;
-  parameter logic [5:0] USBUART_INTR_ENABLE_OFFSET = 6'h 4;
-  parameter logic [5:0] USBUART_INTR_TEST_OFFSET = 6'h 8;
-  parameter logic [5:0] USBUART_CTRL_OFFSET = 6'h c;
-  parameter logic [5:0] USBUART_STATUS_OFFSET = 6'h 10;
-  parameter logic [5:0] USBUART_RDATA_OFFSET = 6'h 14;
-  parameter logic [5:0] USBUART_WDATA_OFFSET = 6'h 18;
-  parameter logic [5:0] USBUART_FIFO_CTRL_OFFSET = 6'h 1c;
-  parameter logic [5:0] USBUART_FIFO_STATUS_OFFSET = 6'h 20;
-  parameter logic [5:0] USBUART_OVRD_OFFSET = 6'h 24;
-  parameter logic [5:0] USBUART_VAL_OFFSET = 6'h 28;
-  parameter logic [5:0] USBUART_TIMEOUT_CTRL_OFFSET = 6'h 2c;
-  parameter logic [5:0] USBUART_USBSTAT_OFFSET = 6'h 30;
-  parameter logic [5:0] USBUART_USBPARAM_OFFSET = 6'h 34;
+  parameter logic [BlockAw-1:0] USBUART_INTR_STATE_OFFSET = 6'h 0;
+  parameter logic [BlockAw-1:0] USBUART_INTR_ENABLE_OFFSET = 6'h 4;
+  parameter logic [BlockAw-1:0] USBUART_INTR_TEST_OFFSET = 6'h 8;
+  parameter logic [BlockAw-1:0] USBUART_CTRL_OFFSET = 6'h c;
+  parameter logic [BlockAw-1:0] USBUART_STATUS_OFFSET = 6'h 10;
+  parameter logic [BlockAw-1:0] USBUART_RDATA_OFFSET = 6'h 14;
+  parameter logic [BlockAw-1:0] USBUART_WDATA_OFFSET = 6'h 18;
+  parameter logic [BlockAw-1:0] USBUART_FIFO_CTRL_OFFSET = 6'h 1c;
+  parameter logic [BlockAw-1:0] USBUART_FIFO_STATUS_OFFSET = 6'h 20;
+  parameter logic [BlockAw-1:0] USBUART_OVRD_OFFSET = 6'h 24;
+  parameter logic [BlockAw-1:0] USBUART_VAL_OFFSET = 6'h 28;
+  parameter logic [BlockAw-1:0] USBUART_TIMEOUT_CTRL_OFFSET = 6'h 2c;
+  parameter logic [BlockAw-1:0] USBUART_USBSTAT_OFFSET = 6'h 30;
+  parameter logic [BlockAw-1:0] USBUART_USBPARAM_OFFSET = 6'h 34;
 
 
   // Register Index

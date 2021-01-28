@@ -15,106 +15,203 @@ class esc_monitor extends alert_esc_base_monitor;
 
   bit under_esc_ping;
 
-  //TODO: currently only support sync mode
-  //TODO: add support for signal int err and reset
   virtual task run_phase(uvm_phase phase);
     fork
-      esc_thread(phase);
-      reset_thread(phase);
-      int_fail_thread(phase);
-      esc_ping_detector();
+      esc_thread();
+      reset_thread();
+      unexpected_resp_thread();
+      sig_int_fail_thread();
     join_none
   endtask : run_phase
 
-  // TODO: placeholder to support reset
-  virtual task reset_thread(uvm_phase phase);
-    forever begin
-      @(negedge cfg.vif.rst_n);
-      @(posedge cfg.vif.rst_n);
-    end
-  endtask : reset_thread
+  virtual function void reset_signals();
+    under_esc_ping = 0;
+  endfunction
 
-  // this task detects if esc_p/n signal is ping signal or real escalation signal
-  // by counting the escalation length. If the signal lasts one clock cycle, it is ping signal;
-  // if it lasts more than one clk cycle, then it is escalation signal
-  virtual task esc_ping_detector();
-    forever begin
-      int cnt;
-      cfg.vif.wait_esc();
-      @(cfg.vif.monitor_cb);
-      while (cfg.vif.get_esc() == 1) begin
-        cnt++;
-        if (cnt == 1) under_esc_ping = 1;
-        if (cnt == 2) under_esc_ping = 0;
-        @(cfg.vif.receiver_cb);
-      end
-      if (under_esc_ping == 1) begin
-        repeat(2) @(cfg.vif.receiver_cb);
-        under_esc_ping = 0;
-      end
-    end
-  endtask : esc_ping_detector
-
-  virtual task esc_thread(uvm_phase phase);
-    alert_esc_seq_item req;
-    logic esc_p = cfg.vif.get_esc();
+  virtual task esc_thread();
+    alert_esc_seq_item req, req_clone;
     forever @(cfg.vif.monitor_cb) begin
-      if (!esc_p && cfg.vif.get_esc() === 1'b1) begin
-        phase.raise_objection(this, $sformatf("%s objection raised", `gfn));
+      if (!under_reset && get_esc() === 1'b1) begin
         req = alert_esc_seq_item::type_id::create("req");
         req.sig_cycle_cnt++;
+        if (is_sig_int_err()) req.esc_handshake_sta = EscIntFail;
+        else req.esc_handshake_sta = EscRespHi;
         @(cfg.vif.monitor_cb);
-        if (cfg.vif.get_esc() === 1'b0) begin
-          req.alert_esc_type = AlertEscPingTrans;
-          // TODO: send again when ping resp fail
-          alert_esc_port.write(req);
-        end else begin
-          req.alert_esc_type = AlertEscSigTrans;
-          req.esc_handshake_sta = EscReceived;
 
-          req.sig_cycle_cnt++;
-          check_esc_resp_high(req);
-          while (cfg.vif.get_esc() === 1) begin
-            check_esc_resp_low(req);
-            if (cfg.vif.get_esc() === 1) check_esc_resp_high(req);
+        // esc_p/n only goes high for a cycle, detect it is a ping signal
+        if (get_esc() === 1'b0) begin
+          int ping_cnter = 1;
+          under_esc_ping = 1;
+          req.alert_esc_type = AlertEscPingTrans;
+          check_esc_resp(.req(req), .is_ping(1));
+          while (req.esc_handshake_sta != EscRespComplete &&
+                 ping_cnter < cfg.ping_timeout_cycle &&
+                 !cfg.probe_vif.get_esc_en() &&
+                 !under_reset) begin
+            @(cfg.vif.monitor_cb);
+            check_esc_resp(.req(req), .is_ping(1));
+            ping_cnter ++;
           end
-          if (req.esc_handshake_sta != EscIntFail) begin
-            req.esc_handshake_sta = EscRespComplete;
+          if (under_reset) continue;
+          if (ping_cnter >= cfg.ping_timeout_cycle) begin
+            alert_esc_seq_item req_clone;
+            `downcast(req_clone, req.clone());
+            req_clone.ping_timeout = 1;
+            alert_esc_port.write(req_clone);
+            // alignment for prim_esc_sender design. Design does not know ping timeout cycles, only
+            // way to exit FSM is when state is IDLE or PingComplete.
+            // for detailed dicussion please refer to issue #3034
+            while (!cfg.probe_vif.get_esc_en() &&
+                   !(req.esc_handshake_sta inside {EscIntFail, EscRespComplete, EscReceived})) begin
+              @(cfg.vif.monitor_cb);
+              check_esc_resp(.req(req), .is_ping(1));
+            end
+          end
+            // wait a clk cycle to enter the esc_p/n mode
+          if (cfg.probe_vif.get_esc_en()) @(cfg.vif.monitor_cb);
+          under_esc_ping = 0;
+        end
+
+        // when it is not a ping, there are two preconditions to reach this code:
+        // 1). standalone escalation signals
+        // 2). originally ping response, but interrupted by real escalation signals, then ping
+        // response is aborted, and immediately jumps to escalation responses
+        if (get_esc() === 1'b1) begin
+          req.alert_esc_type = AlertEscSigTrans;
+          `downcast(req_clone, req.clone());
+
+          // check resp_p/n response until esc_p/n completes
+          // Sig_cycle_cnt records how many cycles esc_p stayed high, which is used for scb check
+          // Check_esc_resp() task checks the first cycle when esp_p reset, because esc_receiver
+          // will still drive resp_p/n at this clock cycle
+          while (req.esc_handshake_sta != EscRespComplete) begin
+            req.sig_cycle_cnt++;
+            check_esc_resp(.req(req_clone), .is_ping(0));
+            @(cfg.vif.monitor_cb);
+            if (get_esc() === 1'b0) begin
+              check_esc_resp(.req(req_clone), .is_ping(0));
+              req.esc_handshake_sta = EscRespComplete;
+              alert_esc_port.write(req);
+            end
           end
         end
-        `uvm_info("esc_monitor", $sformatf("[%s]: handshake status is %s",
-            req.alert_esc_type.name(), req.esc_handshake_sta.name()), UVM_HIGH)
-        alert_esc_port.write(req);
-        phase.drop_objection(this, $sformatf("%s objection dropped", `gfn));
+
+        `uvm_info("esc_monitor", $sformatf("[%s]: handshake status is %s, timeout=%0b",
+            req.alert_esc_type.name(), req.esc_handshake_sta.name(), req.ping_timeout), UVM_HIGH)
+         if (cfg.en_cov) begin
+           cov.m_esc_handshake_complete_cg.sample(req.alert_esc_type, req.esc_handshake_sta);
+           if (cfg.en_ping_cov) cov.m_alert_esc_trans_cg.sample(req.alert_esc_type);
+         end
       end
-      esc_p = cfg.vif.get_esc();
     end
   endtask : esc_thread
 
-  virtual task int_fail_thread(uvm_phase phase);
+  virtual task unexpected_resp_thread();
     alert_esc_seq_item req;
     forever @(cfg.vif.monitor_cb) begin
-      while (cfg.vif.get_esc() === 1'b0 && !under_esc_ping) begin
+      while (get_esc() === 1'b0 && !under_esc_ping) begin
         @(cfg.vif.monitor_cb);
-        if (cfg.vif.get_resp_p() === 1'b1 && cfg.vif.get_resp_n() == 1'b0) begin
+        if (cfg.vif.monitor_cb.esc_rx.resp_p === 1'b1 &&
+            cfg.vif.monitor_cb.esc_rx.resp_n === 1'b0 && !under_reset) begin
           req = alert_esc_seq_item::type_id::create("req");
           req.alert_esc_type = AlertEscIntFail;
           alert_esc_port.write(req);
         end
       end
     end
-  endtask : int_fail_thread
+  endtask : unexpected_resp_thread
 
-  virtual task check_esc_resp_high(alert_esc_seq_item req);
-    if (cfg.vif.get_resp_p() != 1) req.esc_handshake_sta = EscIntFail;
-    @(cfg.vif.monitor_cb);
-    if (cfg.vif.get_esc() === 1) req.sig_cycle_cnt++;
-  endtask : check_esc_resp_high
+  virtual task sig_int_fail_thread();
+    alert_esc_seq_item req;
+    forever @(cfg.vif.monitor_cb) begin
+      if (is_sig_int_err() && !under_reset) begin
+        req = alert_esc_seq_item::type_id::create("req");
+        req.alert_esc_type = AlertEscIntFail;
+        alert_esc_port.write(req);
+      end
+    end
+  endtask : sig_int_fail_thread
 
-  virtual task check_esc_resp_low(alert_esc_seq_item req);
-    if (cfg.vif.get_resp_p() != 0) req.esc_handshake_sta = EscIntFail;
-    @(cfg.vif.monitor_cb);
-    if (cfg.vif.get_esc() === 1) req.sig_cycle_cnt++;
-  endtask : check_esc_resp_low
+  // this task checks if resp_p/n is correct by:
+  // if ping is interrupt by real escalation, abort checking and goes to next expected stage
+  // if it is not a ping_response, it should follow: low -> high .. until esc_p goes low
+  // if it is a ping_response, it should follow: low -> high -> low -> high
+  // if any clock cycle resp_p/n does not match the expected pattern, reset back to "low" state
+  // if any clock cycle resp_p/n are not complement, reset back to "low" state
+  virtual task check_esc_resp(alert_esc_seq_item req, bit is_ping);
+    case (req.esc_handshake_sta)
+      EscIntFail, EscReceived: begin
+        if (cfg.vif.monitor_cb.esc_rx.resp_p !== 0) begin
+          alert_esc_seq_item req_clone;
+          `downcast(req_clone, req.clone());
+          req_clone.esc_handshake_sta = EscIntFail;
+          alert_esc_port.write(req_clone);
+        end
+        if (!cfg.probe_vif.get_esc_en() && req.esc_handshake_sta == EscIntFail && !is_ping) begin
+          req.esc_handshake_sta = EscReceived;
+        end else begin
+          req.esc_handshake_sta = EscRespHi;
+        end
+      end
+      EscRespHi: begin
+        if (is_ping && cfg.probe_vif.get_esc_en()) begin
+          req.esc_handshake_sta = EscRespLo;
+        end else if (cfg.vif.monitor_cb.esc_rx.resp_p !== 1) begin
+          req.esc_handshake_sta = EscIntFail;
+          alert_esc_port.write(req);
+        end else begin
+          req.esc_handshake_sta = EscRespLo;
+        end
+      end
+      EscRespLo: begin
+        if (is_ping && cfg.probe_vif.get_esc_en()) begin
+          req.esc_handshake_sta = EscRespHi;
+        end else if (cfg.vif.monitor_cb.esc_rx.resp_p !== 0) begin
+          req.esc_handshake_sta = EscIntFail;
+          alert_esc_port.write(req);
+        end else begin
+          if (is_ping) req.esc_handshake_sta = EscRespPing0;
+          else req.esc_handshake_sta = EscRespHi;
+        end
+      end
+      EscRespPing0: begin
+        if (is_ping && cfg.probe_vif.get_esc_en()) begin
+          req.esc_handshake_sta = EscRespLo;
+        end else if (cfg.vif.monitor_cb.esc_rx.resp_p !== 1) begin
+          req.esc_handshake_sta = EscIntFail;
+          alert_esc_port.write(req);
+        end else begin
+          req.esc_handshake_sta = EscRespPing1;
+        end
+      end
+      EscRespPing1: begin
+        if (is_ping && cfg.probe_vif.get_esc_en()) begin
+          req.esc_handshake_sta = EscRespHi;
+        end else if (cfg.vif.monitor_cb.esc_rx.resp_p !== 0) begin
+          req.esc_handshake_sta = EscIntFail;
+          alert_esc_port.write(req);
+        end else begin
+          req.esc_handshake_sta = EscRespComplete;
+        end
+      end
+    endcase
+    if (is_sig_int_err()) req.esc_handshake_sta = EscIntFail;
+  endtask : check_esc_resp
+
+  virtual function bit get_esc();
+    return cfg.vif.monitor_cb.esc_tx.esc_p && !cfg.vif.monitor_cb.esc_tx.esc_n;
+  endfunction
+
+  virtual function bit is_sig_int_err();
+    return cfg.vif.monitor_cb.esc_rx.resp_p === cfg.vif.monitor_cb.esc_rx.resp_n;
+  endfunction : is_sig_int_err
+
+  // end phase when no escalation signal is triggered
+  virtual task monitor_ready_to_end();
+    forever @(cfg.vif.monitor_cb.esc_rx.resp_p || cfg.vif.monitor_cb.esc_tx.esc_p) begin
+      ok_to_end = !cfg.vif.monitor_cb.esc_rx.resp_p && cfg.vif.monitor_cb.esc_rx.resp_n &&
+                  !get_esc();
+    end
+  endtask
 
 endclass : esc_monitor

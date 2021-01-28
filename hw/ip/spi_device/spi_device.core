@@ -10,7 +10,10 @@ filesets:
     depend:
       - lowrisc:ip:tlul
       - lowrisc:prim:all
+      - lowrisc:prim:clock_buf
       - lowrisc:prim:clock_gating
+      - lowrisc:prim:clock_inv
+      - lowrisc:prim:ram_2p_adv
     files:
       - rtl/spi_device_reg_pkg.sv
       - rtl/spi_device_reg_top.sv
@@ -39,10 +42,11 @@ filesets:
       - lint/spi_device.waiver
     file_type: waiver
 
-  files_formal:
-    files:
-      - dv/tb/spi_device_bind.sv
-    file_type: systemVerilogSource
+  files_veriblelint_waiver:
+    depend:
+      # common waivers
+      - lowrisc:lint:common
+      - lowrisc:lint:comportable
 
 parameters:
   SYNTHESIS:
@@ -53,16 +57,10 @@ parameters:
 targets:
   default: &default_target
     filesets:
-      - tool_verilator  ? (files_verilator_waiver)
-      - tool_ascentlint ? (files_ascentlint_waiver)
-      - target_formal   ? (files_formal)
+      - tool_verilator   ? (files_verilator_waiver)
+      - tool_ascentlint  ? (files_ascentlint_waiver)
+      - tool_veriblelint ? (files_veriblelint_waiver)
       - files_rtl
-    toplevel: spi_device
-
-  formal:
-    filesets:
-      - files_rtl
-      - files_formal
     toplevel: spi_device
 
   lint:
@@ -75,5 +73,3 @@ targets:
         mode: lint-only
         verilator_options:
           - "-Wall"
-
-

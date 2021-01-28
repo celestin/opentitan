@@ -1,4 +1,4 @@
-// Copyright 2018 lowRISC contributors.
+// Copyright lowRISC contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,6 +6,7 @@ package scoreboard_pkg;
 
   import uvm_pkg::*;
   import dv_lib_pkg::*;
+  import dv_base_reg_pkg::*;
 
   typedef enum bit {
     kSrcPort = 1'b0,

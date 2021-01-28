@@ -11,10 +11,10 @@
 // raise an error by asserting integ_fail_o.
 //
 // Further, the module supports ping testing of the alert diff pair. In order to
-// initiate a ping test, ping_en_i shall be set to 1'b1 until ping_ok_o is
+// initiate a ping test, ping_req_i shall be set to 1'b1 until ping_ok_o is
 // asserted for one cycle. The signal may be de-asserted (e.g. after a long)
 // timeout period. However note that all ping responses that come in after
-// deasserting ping_en_i will be treated as native alerts.
+// deasserting ping_req_i will be treated as native alerts.
 //
 // The protocol works in both asynchronous and synchronous cases. In the
 // asynchronous case, the parameter AsyncOn must be set to 1'b1 in order to
@@ -39,7 +39,7 @@ module prim_alert_receiver
   input             rst_ni,
   // this triggers a ping test. keep asserted
   // until ping_ok_o is asserted.
-  input             ping_en_i,
+  input             ping_req_i,
   output logic      ping_ok_o,
   // asserted if signal integrity issue detected
   output logic      integ_fail_o,
@@ -63,13 +63,13 @@ module prim_alert_receiver
   ) i_decode_alert (
     .clk_i,
     .rst_ni,
-    .diff_pi  ( alert_tx_i.alert_p     ),
-    .diff_ni  ( alert_tx_i.alert_n     ),
-    .level_o  ( alert_level  ),
-    .rise_o   (              ),
-    .fall_o   (              ),
-    .event_o  (              ),
-    .sigint_o ( alert_sigint )
+    .diff_pi  ( alert_tx_i.alert_p ),
+    .diff_ni  ( alert_tx_i.alert_n ),
+    .level_o  ( alert_level        ),
+    .rise_o   (                    ),
+    .fall_o   (                    ),
+    .event_o  (                    ),
+    .sigint_o ( alert_sigint       )
   );
 
   /////////////////////////////////////////////////////
@@ -78,28 +78,48 @@ module prim_alert_receiver
   typedef enum logic [1:0] {Idle, HsAckWait, Pause0, Pause1} state_e;
   state_e state_d, state_q;
   logic ping_rise;
-  logic ping_tog_d, ping_tog_q, ack_d, ack_q;
-  logic ping_en_d, ping_en_q;
+  logic ping_tog, ping_tog_dp, ping_tog_qp, ping_tog_dn, ping_tog_qn;
+  logic ack, ack_dp, ack_qp, ack_dn, ack_qn;
+  logic ping_req_d, ping_req_q;
   logic ping_pending_d, ping_pending_q;
 
-  // signal ping request upon positive transition on ping_en_i
+  // signal ping request upon positive transition on ping_req_i
   // signalling is performed by a level change event on the diff output
-  assign ping_en_d  = ping_en_i;
-  assign ping_rise  = ping_en_i && !ping_en_q;
-  assign ping_tog_d = (ping_rise) ? ~ping_tog_q : ping_tog_q;
+  assign ping_req_d  = ping_req_i;
+  assign ping_rise  = ping_req_i && !ping_req_q;
+  assign ping_tog = (ping_rise) ? ~ping_tog_qp : ping_tog_qp;
+
+  // This prevents further tool optimizations of the differential signal.
+  prim_buf u_prim_buf_ack_p (
+    .in_i(ack),
+    .out_o(ack_dp)
+  );
+  prim_buf u_prim_buf_ack_n (
+    .in_i(~ack),
+    .out_o(ack_dn)
+  );
+  prim_buf u_prim_buf_ping_p (
+    .in_i(ping_tog),
+    .out_o(ping_tog_dp)
+  );
+  prim_buf u_prim_buf_ping_n (
+    .in_i(~ping_tog),
+    .out_o(ping_tog_dn)
+  );
 
   // the ping pending signal is used to in the FSM to distinguish whether the
   // incoming handshake shall be treated as an alert or a ping response.
   // it is important that this is only set on a rising ping_en level change, since
   // otherwise the ping enable signal could be abused to "mask" all native alerts
   // as ping responses by constantly tying it to 1.
-  assign ping_pending_d = ping_rise | ((~ping_ok_o) & ping_en_i & ping_pending_q);
+  assign ping_pending_d = ping_rise | ((~ping_ok_o) & ping_req_i & ping_pending_q);
 
   // diff pair outputs
-  assign alert_rx_o.ack_p  = ack_q;
-  assign alert_rx_o.ack_n  = ~ack_q;
-  assign alert_rx_o.ping_p = ping_tog_q;
-  assign alert_rx_o.ping_n = ~ping_tog_q;
+  assign alert_rx_o.ack_p = ack_qp;
+  assign alert_rx_o.ack_n = ack_qn;
+
+  assign alert_rx_o.ping_p = ping_tog_qp;
+  assign alert_rx_o.ping_n = ping_tog_qn;
 
   // this FSM receives the four phase handshakes from the alert receiver
   // note that the latency of the alert_p/n input diff pair is at least one
@@ -108,7 +128,7 @@ module prim_alert_receiver
   always_comb begin : p_fsm
     // default
     state_d      = state_q;
-    ack_d        = 1'b0;
+    ack          = 1'b0;
     ping_ok_o    = 1'b0;
     integ_fail_o = 1'b0;
     alert_o      = 1'b0;
@@ -118,7 +138,7 @@ module prim_alert_receiver
         // wait for handshake to be initiated
         if (alert_level) begin
           state_d = HsAckWait;
-          ack_d   = 1'b1;
+          ack     = 1'b1;
           // signal either an alert or ping received on the output
           if (ping_pending_q) begin
             ping_ok_o = 1'b1;
@@ -132,7 +152,7 @@ module prim_alert_receiver
         if (!alert_level) begin
           state_d  = Pause0;
         end else begin
-          ack_d    = 1'b1;
+          ack      = 1'b1;
         end
       end
       // pause cycles between back-to-back handshakes
@@ -144,7 +164,7 @@ module prim_alert_receiver
     // override in case of sigint
     if (alert_sigint) begin
       state_d      = Idle;
-      ack_d        = 1'b0;
+      ack          = 1'b0;
       ping_ok_o    = 1'b0;
       integ_fail_o = 1'b1;
       alert_o      = 1'b0;
@@ -154,15 +174,19 @@ module prim_alert_receiver
   always_ff @(posedge clk_i or negedge rst_ni) begin : p_reg
     if (!rst_ni) begin
       state_q        <= Idle;
-      ack_q          <= 1'b0;
-      ping_tog_q     <= 1'b0;
-      ping_en_q      <= 1'b0;
+      ack_qp         <= 1'b0;
+      ack_qn         <= 1'b1;
+      ping_tog_qp    <= 1'b0;
+      ping_tog_qn    <= 1'b1;
+      ping_req_q     <= 1'b0;
       ping_pending_q <= 1'b0;
     end else begin
       state_q        <= state_d;
-      ack_q          <= ack_d;
-      ping_tog_q     <= ping_tog_d;
-      ping_en_q      <= ping_en_d;
+      ack_qp         <= ack_dp;
+      ack_qn         <= ack_dn;
+      ping_tog_qp    <= ping_tog_dp;
+      ping_tog_qn    <= ping_tog_dn;
+      ping_req_q     <= ping_req_d;
       ping_pending_q <= ping_pending_d;
     end
   end
@@ -182,11 +206,11 @@ module prim_alert_receiver
   `ASSERT(PingDiffOk_A, alert_rx_o.ping_p ^ alert_rx_o.ping_n)
   `ASSERT(AckDiffOk_A, alert_rx_o.ack_p ^ alert_rx_o.ack_n)
   // ping request at input -> need to see encoded ping request
-  `ASSERT(PingRequest0_A, ##1 $rose(ping_en_i) |=> $changed(alert_rx_o.ping_p))
+  `ASSERT(PingRequest0_A, ##1 $rose(ping_req_i) |=> $changed(alert_rx_o.ping_p))
   // ping response implies it has been requested
   `ASSERT(PingResponse0_A, ping_ok_o |-> ping_pending_q)
   // correctly latch ping request
-  `ASSERT(PingPending_A, ##1 $rose(ping_en_i) |=> ping_pending_q)
+  `ASSERT(PingPending_A, ##1 $rose(ping_req_i) |=> ping_pending_q)
 
   if (AsyncOn) begin : gen_async_assert
     // signal integrity check propagation

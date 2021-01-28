@@ -198,8 +198,8 @@ ${"end" if loop.last else ""}
 % for block in xbar.nodes:
   % if block.node_type.name   == "ASYNC_FIFO":
   tlul_fifo_async #(
-    .ReqDepth        (3),// At least 3 to make async work
-    .RspDepth        (3) // At least 3 to make async work
+    .ReqDepth        (4),// At least 4 to make async work
+    .RspDepth        (4) // At least 4 to make async work
   ) u_${block.name} (
     .clk_h_i      (${block.clocks[0]}),
     .rst_h_ni     (${block.resets[0]}),
@@ -224,9 +224,9 @@ ${"end" if loop.last else ""}
     .DReqPass  (${len(block.ds)}'h${"%x" % block.dpass}),
     .DRspPass  (${len(block.ds)}'h${"%x" % block.dpass}),
     % endif
-    % if block.hdepth != 2:
-    .DReqDepth ({${len(block.ds)}{4'h${block.ddepth}}}),
-    .DRspDepth ({${len(block.ds)}{4'h${block.ddepth}}}),
+    % if block.ddepth != 2:
+    .DReqDepth (${len(block.ds)*4}'h${"%x" % block.ddepth}),
+    .DRspDepth (${len(block.ds)*4}'h${"%x" % block.ddepth}),
     % endif
     .N         (${len(block.ds)})
   ) u_${block.name} (
@@ -236,7 +236,7 @@ ${"end" if loop.last else ""}
     .tl_h_o       (tl_${block.name}_us_d2h),
     .tl_d_o       (tl_${block.name}_ds_h2d),
     .tl_d_i       (tl_${block.name}_ds_d2h),
-    .dev_select   (dev_sel_${block.name})
+    .dev_select_i (dev_sel_${block.name})
   );
   % elif block.node_type.name == "SOCKET_M1":
   tlul_socket_m1 #(
@@ -245,16 +245,16 @@ ${"end" if loop.last else ""}
     .HRspPass  (${len(block.us)}'h${"%x" % block.hpass}),
     % endif
     % if block.hdepth != 2:
-    .HReqDepth ({${len(block.us)}{4'h${block.hdepth}}}),
-    .HRspDepth ({${len(block.us)}{4'h${block.hdepth}}}),
-    % endif
-    % if block.ddepth != 2:
-    .DReqDepth (4'h${block.ddepth}),
-    .DRspDepth (4'h${block.ddepth}),
+    .HReqDepth (${len(block.us)*4}'h${"%x" % block.hdepth}),
+    .HRspDepth (${len(block.us)*4}'h${"%x" % block.hdepth}),
     % endif
     % if block.dpass != 1:
     .DReqPass  (1'b${block.dpass}),
     .DRspPass  (1'b${block.dpass}),
+    % endif
+    % if block.ddepth != 2:
+    .DReqDepth (4'h${block.ddepth}),
+    .DRspDepth (4'h${block.ddepth}),
     % endif
     .M         (${len(block.us)})
   ) u_${block.name} (

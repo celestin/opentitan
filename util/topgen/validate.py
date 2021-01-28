@@ -2,8 +2,8 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 import logging as log
-from enum import Enum
 from collections import OrderedDict
+from enum import Enum
 
 from reggen.validate import check_keys
 
@@ -47,12 +47,13 @@ top_required = {
     ['d', 'Base address of RV_DM. Planned to move to \
 module'],
     'xbar': ['l', 'List of the xbar used in the top'],
+    'rnd_cnst_seed': ['int', "Seed for random netlist constant computation"],
 }
 
 top_optional = {
-    'interrupt_modules': ['l', 'list of the modules that connects to rv_plic'],
+    'interrupt_module': ['l', 'list of the modules that connects to rv_plic'],
     'interrupt': ['lnw', 'interrupts (generated)'],
-    'alert_modules':
+    'alert_module':
     ['l', 'list of the modules that connects to alert_handler'],
     'alert': ['lnw', 'alerts (generated)'],
     'alert_async': ['l', 'async alerts (generated)'],
@@ -60,6 +61,8 @@ top_optional = {
     'padctrl':
     ['g', 'PADS instantiation, if doesn\'t exist, tool creates direct output'],
     'inter_module': ['g', 'define the signal connections between the modules'],
+    'num_cores': ['pn', "number of computing units"],
+    'datawidth': ['pn', "default data width"],
 }
 
 top_added = {}
@@ -87,8 +90,28 @@ padctrl_optional = {
 }
 padctrl_added = {}
 
+clock_srcs_required = {
+    'name': ['s', 'name of clock group'],
+    'aon': ['s', 'yes, no. aon attribute of a clock'],
+    'freq': ['s', 'frequency of clock in Hz'],
+}
+
+clock_srcs_optional = {
+    'derived': ['s', 'whether clock is derived'],
+    'params': ['s', 'extra clock parameters']
+}
+
+derived_clock_srcs_required = {
+    'name': ['s', 'name of clock group'],
+    'aon': ['s', 'yes, no. aon attribute of a clock'],
+    'freq': ['s', 'frequency of clock in Hz'],
+    'src': ['s', 'source clock'],
+    'div': ['d', 'ratio between source clock and derived clock'],
+}
+
 clock_groups_required = {
     'name': ['s', 'name of clock group'],
+    'src': ['s', 'yes, no. This clock group is directly from source'],
     'sw_cg': ['s', 'yes, no, hint. Software clock gate attributes'],
 }
 clock_groups_optional = {
@@ -96,6 +119,24 @@ clock_groups_optional = {
     'clocks': ['g', 'groups of clock name to source'],
 }
 clock_groups_added = {}
+
+eflash_required = {
+    'banks': ['d', 'number of flash banks'],
+    'pages_per_bank': ['d', 'number of data pages per flash bank'],
+    'program_resolution':
+    ['d', 'maximum number of flash words allowed to program'],
+    'clock_srcs': ['g', 'clock connections'],
+    'clock_group': ['s', 'associated clock attribute group'],
+    'reset_connections': ['g', 'reset connections'],
+    'type': ['s', 'type of memory'],
+    'base_addr': ['s', 'strarting hex address of memory'],
+    'swaccess': ['s', 'software accessibility'],
+    'inter_signal_list': ['lg', 'intersignal list']
+}
+
+eflash_optional = {}
+
+eflash_added = {}
 
 
 class TargetType(Enum):
@@ -106,19 +147,61 @@ class TargetType(Enum):
 class Target:
     """Target class informs the checkers if we are validating a module or xbar
     """
-
-    # The type of this target
-    target_type = ""
-
-    # The key to search against
-    key = ""
-
     def __init__(self, target_type):
+        # The type of this target
         self.target_type = target_type
+        # The key to search against
         if target_type == TargetType.MODULE:
             self.key = "type"
         else:
             self.key = "name"
+
+
+class Flash:
+    """Flash class contains information regarding parameter defaults.
+       For now, only expose banks / pages_per_bank for user configuration.
+       For now, also enforce power of 2 requiremnt.
+    """
+    max_banks = 4
+    max_pages_per_bank = 1024
+
+    def __init__(self, mem):
+        self.banks = mem['banks']
+        self.pages_per_bank = mem['pages_per_bank']
+        self.program_resolution = mem['program_resolution']
+        self.words_per_page = 256
+        self.data_width = 64
+        self.metadata_width = 12
+        self.info_types = 3
+        self.infos_per_bank = [10, 1, 2]
+
+    def is_pow2(self, n):
+        return (n != 0) and (n & (n - 1) == 0)
+
+    def check_values(self):
+        pow2_check = self.is_pow2(self.banks) and self.is_pow2(self.pages_per_bank) and \
+        self.is_pow2(self.program_resolution)
+        limit_check = (self.banks <= Flash.max_banks) \
+            and (self.pages_per_bank <= Flash.max_pages_per_bank)
+
+        return pow2_check and limit_check
+
+    def calc_size(self):
+        word_bytes = self.data_width / 8
+        bytes_per_page = word_bytes * self.words_per_page
+        bytes_per_bank = bytes_per_page * self.pages_per_bank
+        return bytes_per_bank * self.banks
+
+    def populate(self, mem):
+        mem['words_per_page'] = self.words_per_page
+        mem['data_width'] = self.data_width
+        mem['metadata_width'] = self.metadata_width
+        mem['info_types'] = self.info_types
+        mem['infos_per_bank'] = self.infos_per_bank
+        mem['size'] = hex(int(self.calc_size()))
+
+        word_bytes = self.data_width / 8
+        mem['pgm_resolution_bytes'] = int(self.program_resolution * word_bytes)
 
 
 # Check to see if each module/xbar defined in top.hjson exists as ip/xbar.hjson
@@ -178,6 +261,12 @@ def check_clock_groups(top):
                 group['sw_cg']))
             error += 1
 
+        # Check combination of src and sw are valid
+        if group['src'] == 'yes' and group['sw_cg'] != 'no':
+            log.error("Invalid combination of src and sw_cg: {} and {}".format(
+                group['src'], group['sw_cg']))
+            error += 1
+
         # Check combination of sw_cg and unique are valid
         unique = group['unique'] if 'unique' in group else 'no'
         if group['sw_cg'] == 'no' and unique != 'no':
@@ -193,10 +282,33 @@ def check_clock_groups(top):
 
 
 def check_clocks_resets(top, ipobjs, ip_idxs, xbarobjs, xbar_idxs):
-    # all defined clock/reset nets
-    reset_nets = [reset['name'] for reset in top['resets']]
-    clock_srcs = [clock['name'] for clock in top['clocks']['srcs']]
+
     error = 0
+
+    # check clock fields are all there
+    ext_srcs = []
+    for src in top['clocks']['srcs']:
+        check_keys(src, clock_srcs_required, clock_srcs_optional, {},
+                   "Clock source")
+        ext_srcs.append(src['name'])
+
+    # check derived clock sources
+    log.info("Collected clocks are {}".format(ext_srcs))
+    for src in top['clocks']['derived_srcs']:
+        check_keys(src, derived_clock_srcs_required, {}, {}, "Derived clocks")
+        try:
+            ext_srcs.index(src['src'])
+        except Exception:
+            error += 1
+            log.error("{} is not a valid src for {}".format(
+                src['src'], src['name']))
+
+    # all defined clock/reset nets
+    reset_nets = [reset['name'] for reset in top['resets']['nodes']]
+    clock_srcs = [
+        clock['name']
+        for clock in top['clocks']['srcs'] + top['clocks']['derived_srcs']
+    ]
 
     # Check clock/reset port connection for all IPs
     for ipcfg in top['module']:
@@ -336,6 +448,67 @@ def validate_clock(top, inst, clock_srcs, prefix=""):
     return error
 
 
+def check_flash(top):
+    error = 0
+
+    for mem in top['memory']:
+        if mem['type'] == "eflash":
+            error = check_keys(mem, eflash_required, eflash_optional,
+                               eflash_added, "Eflash")
+
+    flash = Flash(mem)
+    error += 1 if not flash.check_values() else 0
+
+    if error:
+        log.error("Flash check failed")
+    else:
+        flash.populate(mem)
+
+    return error
+
+
+def check_power_domains(top):
+    error = 0
+
+    # check that the default domain is valid
+    if top['power']['default'] not in top['power']['domains']:
+        error += 1
+        return error
+
+    # check that power domain definition is consistent with reset and module definition
+    for reset in top['resets']['nodes']:
+        if reset['gen']:
+            if 'domains' not in reset:
+                log.error("{} missing domain definition".format(reset['name']))
+                error += 1
+                return error
+            else:
+                for domain in reset['domains']:
+                    if domain not in top['power']['domains']:
+                        log.error("{} defined invalid domain {}".format(
+                            reset['name'], domain))
+                        error += 1
+                        return error
+
+    # Check that each module, xbar, memory has a power domain defined.
+    # If not, give it a default.
+    # If there is one defined, check that it is a valid definition
+    for end_point in top['module'] + top['memory'] + top['xbar']:
+        if 'domain' not in end_point:
+            log.warning("{} does not have a power domain defined, \
+            assigning default".format(end_point['name']))
+
+            end_point['domain'] = top['power']['default']
+        elif end_point['domain'] not in top['power']['domains']:
+            log.error("{} defined invalid domain {}".format(
+                end_point['name'], end_point['domain']))
+            error += 1
+            return error
+
+    # arrived without incident, return
+    return error
+
+
 def validate_top(top, ipobjs, xbarobjs):
     # return as it is for now
     error = check_keys(top, top_required, top_optional, top_added, "top")
@@ -355,6 +528,10 @@ def validate_top(top, ipobjs, xbarobjs):
     error += err
 
     # MEMORY check
+    error += check_flash(top)
+
+    # Power domain check
+    error += check_power_domains(top)
 
     # Clock / Reset check
     error += check_clocks_resets(top, ipobjs, ip_idxs, xbarobjs, xbar_idxs)

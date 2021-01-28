@@ -10,12 +10,12 @@
 `include "prim_assert.sv"
 
 module ibex_controller #(
-    parameter bit WritebackStage = 0
+    parameter bit WritebackStage  = 0,
+    parameter bit BranchPredictor = 0
  ) (
     input  logic                  clk_i,
     input  logic                  rst_ni,
 
-    input  logic                  fetch_enable_i,        // start decoding
     output logic                  ctrl_busy_o,           // core is busy processing instrs
 
     // decoder related signals
@@ -27,14 +27,15 @@ module ibex_controller #(
     input  logic                  ebrk_insn_i,             // decoder has EBREAK instr
     input  logic                  csr_pipe_flush_i,        // do CSR-related pipeline flush
 
-    // from IF-ID pipeline stage
-    input  logic                  instr_valid_i,           // instr from IF-ID reg is valid
-    input  logic [31:0]           instr_i,                 // instr from IF-ID reg, for mtval
-    input  logic [15:0]           instr_compressed_i,      // instr from IF-ID reg, for mtval
-    input  logic                  instr_is_compressed_i,   // instr from IF-ID reg is compressed
-    input  logic                  instr_fetch_err_i,       // instr from IF-ID reg has error
-    input  logic                  instr_fetch_err_plus2_i, // instr from IF-ID reg error is x32
-    input  logic [31:0]           pc_id_i,                 // instr from IF-ID reg address
+    // instr from IF-ID pipeline stage
+    input  logic                  instr_valid_i,           // instr is valid
+    input  logic [31:0]           instr_i,                 // uncompressed instr data for mtval
+    input  logic [15:0]           instr_compressed_i,      // instr compressed data for mtval
+    input  logic                  instr_is_compressed_i,   // instr is compressed
+    input  logic                  instr_bp_taken_i,        // instr was predicted taken branch
+    input  logic                  instr_fetch_err_i,       // instr has error
+    input  logic                  instr_fetch_err_plus2_i, // instr error is x32
+    input  logic [31:0]           pc_id_i,                 // instr address
 
     // to IF-ID pipeline stage
     output logic                  instr_valid_clear_o,     // kill instr in IF-ID reg
@@ -45,8 +46,11 @@ module ibex_controller #(
     // to prefetcher
     output logic                  instr_req_o,             // start fetching instructions
     output logic                  pc_set_o,                // jump to address set by pc_mux
+    output logic                  pc_set_spec_o,           // speculative branch
     output ibex_pkg::pc_sel_e     pc_mux_o,                // IF stage fetch address selector
                                                            // (boot, normal, exception...)
+    output logic                  nt_branch_mispredict_o,  // Not-taken branch in ID/EX was
+                                                           // mispredicted (predicted taken)
     output ibex_pkg::exc_pc_sel_e exc_pc_mux_o,            // IF stage selector for exception PC
     output ibex_pkg::exc_cause_e  exc_cause_o,             // for IF stage, CSRs
 
@@ -57,7 +61,11 @@ module ibex_controller #(
     output logic                  wb_exception_o,          // Instruction in WB taking an exception
 
     // jump/branch signals
-    input  logic                  branch_set_i,            // branch taken set signal
+    input  logic                  branch_set_i,            // branch set signal (branch definitely
+                                                           // taken)
+    input  logic                  branch_set_spec_i,       // speculative branch signal (branch
+                                                           // may be taken)
+    input  logic                  branch_not_set_i,        // branch is definitely not taken
     input  logic                  jump_set_i,              // jump taken set signal
 
     // interrupt signals
@@ -92,6 +100,7 @@ module ibex_controller #(
     input  logic                  stall_id_i,
     input  logic                  stall_wb_i,
     output logic                  flush_id_o,
+    input  logic                  ready_wb_i,
 
     // performance monitors
     output logic                  perf_jump_o,             // we are executing a jump
@@ -116,8 +125,18 @@ module ibex_controller #(
   logic exc_req_q, exc_req_d;
   logic illegal_insn_q, illegal_insn_d;
 
+  // Of the various exception/fault signals, which one takes priority in FLUSH and hence controls
+  // what happens next (setting exc_cause, csr_mtval etc)
+  logic instr_fetch_err_prio;
+  logic illegal_insn_prio;
+  logic ecall_insn_prio;
+  logic ebrk_insn_prio;
+  logic store_err_prio;
+  logic load_err_prio;
+
   logic stall;
   logic halt_if;
+  logic retain_id;
   logic flush_id;
   logic illegal_dret;
   logic illegal_umode;
@@ -182,12 +201,14 @@ module ibex_controller #(
   // it is needed to break the path from ibex_cs_registers/illegal_csr_insn_o
   // to pc_set_o.  Clear when controller is in FLUSH so it won't remain set
   // once illegal instruction is handled.
+  // All terms in this expression are qualified by instr_valid_i
   assign illegal_insn_d = (illegal_insn_i | illegal_dret | illegal_umode) & (ctrl_fsm_cs != FLUSH);
 
   // exception requests
   // requests are flopped in exc_req_q.  This is cleared when controller is in
   // the FLUSH state so the cycle following exc_req_q won't remain set for an
   // exception request that has just been handled.
+  // All terms in this expression are qualified by instr_valid_i
   assign exc_req_d = (ecall_insn | ebrk_insn | illegal_insn_d | instr_fetch_err) &
                      (ctrl_fsm_cs != FLUSH);
 
@@ -205,10 +226,13 @@ module ibex_controller #(
   // request reasons that are relevant to a branch.
 
   // generic special request signal, applies to all instructions
+  // All terms in this expression are qualified by instr_valid_i except exc_req_lsu which can come
+  // from the Writeback stage with no instr_valid_i from the ID stage
   assign special_req_all = mret_insn | dret_insn | wfi_insn | csr_pipe_flush |
       exc_req_d | exc_req_lsu;
 
   // special request that can specifically occur during branch instructions
+  // All terms in this expression are qualified by instr_valid_i
   assign special_req_branch = instr_fetch_err & (ctrl_fsm_cs != FLUSH);
 
   `ASSERT(SpecialReqBranchGivesSpecialReqAll,
@@ -217,12 +241,70 @@ module ibex_controller #(
   `ASSERT(SpecialReqAllGivesSpecialReqBranchIfBranchInst,
     special_req_all && (branch_set_i || jump_set_i) |-> special_req_branch)
 
-  if (WritebackStage) begin
+  // Exception/fault prioritisation is taken from Table 3.7 of Priviledged Spec v1.11
+  if (WritebackStage) begin : g_wb_exceptions
+    always_comb begin
+      instr_fetch_err_prio = 0;
+      illegal_insn_prio    = 0;
+      ecall_insn_prio      = 0;
+      ebrk_insn_prio       = 0;
+      store_err_prio       = 0;
+      load_err_prio        = 0;
+
+      // Note that with the writeback stage store/load errors occur on the instruction in writeback,
+      // all other exception/faults occur on the instruction in ID/EX. The faults from writeback
+      // must take priority as that instruction is architecurally ordered before the one in ID/EX.
+      if (store_err_q) begin
+        store_err_prio = 1'b1;
+      end else if (load_err_q) begin
+        load_err_prio  = 1'b1;
+      end else if (instr_fetch_err) begin
+        instr_fetch_err_prio = 1'b1;
+      end else if (illegal_insn_q) begin
+        illegal_insn_prio = 1'b1;
+      end else if (ecall_insn) begin
+        ecall_insn_prio = 1'b1;
+      end else if (ebrk_insn) begin
+        ebrk_insn_prio = 1'b1;
+      end
+    end
+
     // Instruction in writeback is generating an exception so instruction in ID must not execute
     assign wb_exception_o = load_err_q | store_err_q | load_err_i | store_err_i;
-  end else begin
+  end else begin : g_no_wb_exceptions
+    always_comb begin
+      instr_fetch_err_prio = 0;
+      illegal_insn_prio    = 0;
+      ecall_insn_prio      = 0;
+      ebrk_insn_prio       = 0;
+      store_err_prio       = 0;
+      load_err_prio        = 0;
+
+      if (instr_fetch_err) begin
+        instr_fetch_err_prio = 1'b1;
+      end else if (illegal_insn_q) begin
+        illegal_insn_prio = 1'b1;
+      end else if (ecall_insn) begin
+        ecall_insn_prio = 1'b1;
+      end else if (ebrk_insn) begin
+        ebrk_insn_prio = 1'b1;
+      end else if (store_err_q) begin
+        store_err_prio = 1'b1;
+      end else if (load_err_q) begin
+        load_err_prio  = 1'b1;
+      end
+    end
     assign wb_exception_o = 1'b0;
   end
+
+  `ASSERT_IF(IbexExceptionPrioOnehot,
+             $onehot({instr_fetch_err_prio,
+                      illegal_insn_prio,
+                      ecall_insn_prio,
+                      ebrk_insn_prio,
+                      store_err_prio,
+                      load_err_prio}),
+             (ctrl_fsm_cs == FLUSH) & exc_req_q)
 
   ////////////////
   // Interrupts //
@@ -262,7 +344,6 @@ module ibex_controller #(
     else if (irqs_i.irq_fast[ 7]) mfip_id = 4'd7;
     else if (irqs_i.irq_fast[ 6]) mfip_id = 4'd6;
     else if (irqs_i.irq_fast[ 5]) mfip_id = 4'd5;
-    else if (irqs_i.irq_fast[ 5]) mfip_id = 4'd5;
     else if (irqs_i.irq_fast[ 4]) mfip_id = 4'd4;
     else if (irqs_i.irq_fast[ 3]) mfip_id = 4'd3;
     else if (irqs_i.irq_fast[ 2]) mfip_id = 4'd2;
@@ -292,38 +373,39 @@ module ibex_controller #(
     // below always set pc_mux and exc_pc_mux but only set pc_set if certain conditions are met.
     // This avoid having to factor those conditions into the pc_mux and exc_pc_mux select signals
     // helping timing.
-    pc_mux_o              = PC_BOOT;
-    pc_set_o              = 1'b0;
+    pc_mux_o               = PC_BOOT;
+    pc_set_o               = 1'b0;
+    pc_set_spec_o          = 1'b0;
+    nt_branch_mispredict_o = 1'b0;
 
-    exc_pc_mux_o          = EXC_PC_IRQ;
-    exc_cause_o           = EXC_CAUSE_INSN_ADDR_MISA; // = 6'h00
+    exc_pc_mux_o           = EXC_PC_IRQ;
+    exc_cause_o            = EXC_CAUSE_INSN_ADDR_MISA; // = 6'h00
 
-    ctrl_fsm_ns           = ctrl_fsm_cs;
+    ctrl_fsm_ns            = ctrl_fsm_cs;
 
-    ctrl_busy_o           = 1'b1;
+    ctrl_busy_o            = 1'b1;
 
-    halt_if               = 1'b0;
-    flush_id              = 1'b0;
+    halt_if                = 1'b0;
+    retain_id              = 1'b0;
+    flush_id               = 1'b0;
 
-    debug_csr_save_o      = 1'b0;
-    debug_cause_o         = DBG_CAUSE_EBREAK;
-    debug_mode_d          = debug_mode_q;
-    nmi_mode_d            = nmi_mode_q;
+    debug_csr_save_o       = 1'b0;
+    debug_cause_o          = DBG_CAUSE_EBREAK;
+    debug_mode_d           = debug_mode_q;
+    nmi_mode_d             = nmi_mode_q;
 
-    perf_tbranch_o        = 1'b0;
-    perf_jump_o           = 1'b0;
+    perf_tbranch_o         = 1'b0;
+    perf_jump_o            = 1'b0;
 
-    controller_run_o      = 1'b0;
+    controller_run_o       = 1'b0;
 
     unique case (ctrl_fsm_cs)
       RESET: begin
-        // just wait for fetch_enable
         instr_req_o   = 1'b0;
         pc_mux_o      = PC_BOOT;
         pc_set_o      = 1'b1;
-        if (fetch_enable_i) begin
-          ctrl_fsm_ns = BOOT_SET;
-        end
+        pc_set_spec_o = 1'b1;
+        ctrl_fsm_ns   = BOOT_SET;
       end
 
       BOOT_SET: begin
@@ -331,6 +413,7 @@ module ibex_controller #(
         instr_req_o   = 1'b1;
         pc_mux_o      = PC_BOOT;
         pc_set_o      = 1'b1;
+        pc_set_spec_o = 1'b1;
 
         ctrl_fsm_ns = FIRST_FETCH;
       end
@@ -399,31 +482,56 @@ module ibex_controller #(
         // which helps timing.
         pc_mux_o = PC_JUMP;
 
-        if (instr_valid_i) begin
 
-          // get ready for special instructions, exceptions, pipeline flushes
-          if (special_req_all) begin
-            // Halt IF but don't flush ID. This leaves a valid instruction in
-            // ID so controller can determine appropriate action in the
-            // FLUSH state.
+        // Get ready for special instructions, exceptions, pipeline flushes
+        if (special_req_all) begin
+          // Halt IF but don't flush ID. This leaves a valid instruction in
+          // ID so controller can determine appropriate action in the
+          // FLUSH state.
+          retain_id = 1'b1;
+
+          // Wait for the writeback stage to either be ready for a new instruction or raise its own
+          // exception before going to FLUSH. If the instruction in writeback raises an exception it
+          // must take priority over any exception from an instruction in ID/EX. Only once the
+          // writeback stage is ready can we be certain that won't happen. Without a writeback
+          // stage ready_wb_i == 1 so the FSM will always go directly to FLUSH.
+
+          if (ready_wb_i | wb_exception_o) begin
             ctrl_fsm_ns = FLUSH;
-            halt_if     = 1'b1;
           end
+        end
 
-          if ((branch_set_i || jump_set_i) && ~special_req_branch) begin
-            pc_set_o       = 1'b1;
+        if (!special_req_branch) begin
+          if (branch_set_i || jump_set_i) begin
+            // Only set the PC if the branch predictor hasn't already done the branch for us
+            pc_set_o       = BranchPredictor ? ~instr_bp_taken_i : 1'b1;
 
             perf_tbranch_o = branch_set_i;
             perf_jump_o    = jump_set_i;
           end
 
-          // If entering debug mode or handling an IRQ the core needs to wait
-          // until the current instruction has finished executing. Stall IF
-          // during that time.
-          if ((enter_debug_mode || handle_irq) && stall) begin
-            halt_if = 1'b1;
+          if (BranchPredictor) begin
+            if (instr_bp_taken_i & branch_not_set_i) begin
+              // If the instruction is a branch that was predicted to be taken but was not taken
+              // signal a mispredict.
+              nt_branch_mispredict_o = 1'b1;
+            end
           end
-        end // instr_valid_i
+        end
+
+        // pc_set signal excluding branch taken condition
+        if ((branch_set_spec_i || jump_set_i) && !special_req_branch) begin
+          // Only speculatively set the PC if the branch predictor hasn't already done the branch
+          // for us
+          pc_set_spec_o = BranchPredictor ? ~instr_bp_taken_i : 1'b1;
+        end
+
+        // If entering debug mode or handling an IRQ the core needs to wait
+        // until the current instruction has finished executing. Stall IF
+        // during that time.
+        if ((enter_debug_mode || handle_irq) && stall) begin
+          halt_if = 1'b1;
+        end
 
         if (!stall && !special_req_all) begin
           if (enter_debug_mode) begin
@@ -452,6 +560,7 @@ module ibex_controller #(
 
         if (handle_irq) begin
           pc_set_o         = 1'b1;
+          pc_set_spec_o    = 1'b1;
 
           csr_save_if_o    = 1'b1;
           csr_save_cause_o = 1'b1;
@@ -487,6 +596,7 @@ module ibex_controller #(
         if (debug_single_step_i || debug_req_i || trigger_match_i) begin
           flush_id         = 1'b1;
           pc_set_o         = 1'b1;
+          pc_set_spec_o    = 1'b1;
 
           csr_save_if_o    = 1'b1;
           debug_csr_save_o = 1'b1;
@@ -515,10 +625,11 @@ module ibex_controller #(
         //
         // for 1. do not update dcsr and dpc, for 2. do so [Debug Spec v0.13.2, p.39]
         // jump to debug exception handler in debug memory
-        flush_id     = 1'b1;
-        pc_mux_o     = PC_EXC;
-        pc_set_o     = 1'b1;
-        exc_pc_mux_o = EXC_PC_DBD;
+        flush_id      = 1'b1;
+        pc_mux_o      = PC_EXC;
+        pc_set_o      = 1'b1;
+        pc_set_spec_o = 1'b1;
+        exc_pc_mux_o  = EXC_PC_DBD;
 
         // update dcsr and dpc
         if (ebreak_into_debug && !debug_mode_q) begin // ebreak with forced entry
@@ -551,6 +662,7 @@ module ibex_controller #(
         // exc_req_lsu is high for one clock cycle only (in DECODE)
         if (exc_req_q || store_err_q || load_err_q) begin
           pc_set_o         = 1'b1;
+          pc_set_spec_o    = 1'b1;
           pc_mux_o         = PC_EXC;
           exc_pc_mux_o     = debug_mode_q ? EXC_PC_DBG_EXC : EXC_PC_EXC;
 
@@ -566,66 +678,70 @@ module ibex_controller #(
 
           csr_save_cause_o = 1'b1;
 
-          // set exception registers, priorities according to Table 3.7 of Privileged Spec v1.11
-          if (instr_fetch_err) begin
-            exc_cause_o = EXC_CAUSE_INSTR_ACCESS_FAULT;
-            csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 32'd2) : pc_id_i;
-
-          end else if (illegal_insn_q) begin
-            exc_cause_o = EXC_CAUSE_ILLEGAL_INSN;
-            csr_mtval_o = instr_is_compressed_i ? {16'b0, instr_compressed_i} : instr_i;
-
-          end else if (ecall_insn) begin
-            exc_cause_o = (priv_mode_i == PRIV_LVL_M) ? EXC_CAUSE_ECALL_MMODE :
-                                                        EXC_CAUSE_ECALL_UMODE;
-
-          end else if (ebrk_insn) begin
-            if (debug_mode_q | ebreak_into_debug) begin
-              /*
-               * EBREAK in debug mode re-enters debug mode
-               *
-               * "The only exception is EBREAK. When that is executed in Debug
-               * Mode, it halts the hart again but without updating dpc or
-               * dcsr." [Debug Spec v0.13.2, p.39]
-               */
-
-              /*
-               * dcsr.ebreakm == 1:
-               * "EBREAK instructions in M-mode enter Debug Mode."
-               * [Debug Spec v0.13.2, p.42]
-               */
-              pc_set_o         = 1'b0;
-              csr_save_id_o    = 1'b0;
-              csr_save_cause_o = 1'b0;
-              ctrl_fsm_ns      = DBG_TAKEN_ID;
-              flush_id         = 1'b0;
-            end else begin
-              /*
-               * "The EBREAK instruction is used by debuggers to cause control
-               * to be transferred back to a debugging environment. It
-               * generates a breakpoint exception and performs no other
-               * operation. [...] ECALL and EBREAK cause the receiving
-               * privilege mode's epc register to be set to the address of the
-               * ECALL or EBREAK instruction itself, not the address of the
-               * following instruction." [Privileged Spec v1.11, p.40]
-               */
-              exc_cause_o      = EXC_CAUSE_BREAKPOINT;
+          // Exception/fault prioritisation logic will have set exactly 1 X_prio signal
+          unique case (1'b1)
+            instr_fetch_err_prio: begin
+                exc_cause_o = EXC_CAUSE_INSTR_ACCESS_FAULT;
+                csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 32'd2) : pc_id_i;
             end
+            illegal_insn_prio: begin
+              exc_cause_o = EXC_CAUSE_ILLEGAL_INSN;
+              csr_mtval_o = instr_is_compressed_i ? {16'b0, instr_compressed_i} : instr_i;
+            end
+            ecall_insn_prio: begin
+              exc_cause_o = (priv_mode_i == PRIV_LVL_M) ? EXC_CAUSE_ECALL_MMODE :
+                                                          EXC_CAUSE_ECALL_UMODE;
+            end
+            ebrk_insn_prio: begin
+              if (debug_mode_q | ebreak_into_debug) begin
+                /*
+                 * EBREAK in debug mode re-enters debug mode
+                 *
+                 * "The only exception is EBREAK. When that is executed in Debug
+                 * Mode, it halts the hart again but without updating dpc or
+                 * dcsr." [Debug Spec v0.13.2, p.39]
+                 */
 
-          end else if (store_err_q) begin
-            exc_cause_o = EXC_CAUSE_STORE_ACCESS_FAULT;
-            csr_mtval_o = lsu_addr_last_i;
-
-          end else begin // load_err_q
-            exc_cause_o = EXC_CAUSE_LOAD_ACCESS_FAULT;
-            csr_mtval_o = lsu_addr_last_i;
-          end
-
+                /*
+                 * dcsr.ebreakm == 1:
+                 * "EBREAK instructions in M-mode enter Debug Mode."
+                 * [Debug Spec v0.13.2, p.42]
+                 */
+                pc_set_o         = 1'b0;
+                pc_set_spec_o    = 1'b0;
+                csr_save_id_o    = 1'b0;
+                csr_save_cause_o = 1'b0;
+                ctrl_fsm_ns      = DBG_TAKEN_ID;
+                flush_id         = 1'b0;
+              end else begin
+                /*
+                 * "The EBREAK instruction is used by debuggers to cause control
+                 * to be transferred back to a debugging environment. It
+                 * generates a breakpoint exception and performs no other
+                 * operation. [...] ECALL and EBREAK cause the receiving
+                 * privilege mode's epc register to be set to the address of the
+                 * ECALL or EBREAK instruction itself, not the address of the
+                 * following instruction." [Privileged Spec v1.11, p.40]
+                 */
+                exc_cause_o      = EXC_CAUSE_BREAKPOINT;
+              end
+            end
+            store_err_prio: begin
+              exc_cause_o = EXC_CAUSE_STORE_ACCESS_FAULT;
+              csr_mtval_o = lsu_addr_last_i;
+            end
+            load_err_prio: begin
+              exc_cause_o = EXC_CAUSE_LOAD_ACCESS_FAULT;
+              csr_mtval_o = lsu_addr_last_i;
+            end
+            default: ;
+          endcase
         end else begin
           // special instructions and pipeline flushes
           if (mret_insn) begin
             pc_mux_o              = PC_ERET;
             pc_set_o              = 1'b1;
+            pc_set_spec_o         = 1'b1;
             csr_restore_mret_id_o = 1'b1;
             if (nmi_mode_q) begin
               nmi_mode_d          = 1'b0; // exit NMI mode
@@ -633,6 +749,7 @@ module ibex_controller #(
           end else if (dret_insn) begin
             pc_mux_o              = PC_DRET;
             pc_set_o              = 1'b1;
+            pc_set_spec_o         = 1'b1;
             debug_mode_d          = 1'b0;
             csr_restore_dret_id_o = 1'b1;
           end else if (wfi_insn) begin
@@ -649,7 +766,10 @@ module ibex_controller #(
         // Leave all other signals as is to ensure CSRs and PC get set as if
         // core was entering exception handler, entry to debug mode will then
         // see the appropriate state and setup dpc correctly.
-        if (enter_debug_mode) begin
+        // If an EBREAK instruction is causing us to enter debug mode on the
+        // same cycle as a debug_req or single step, honor the EBREAK and
+        // proceed to DBG_TAKEN_ID.
+        if (enter_debug_mode && !(ebrk_insn_prio && ebreak_into_debug)) begin
           ctrl_fsm_ns = DBG_TAKEN_IF;
         end
       end // FLUSH
@@ -679,14 +799,14 @@ module ibex_controller #(
   assign stall = stall_id_i | stall_wb_i;
 
   // signal to IF stage that ID stage is ready for next instr
-  assign id_in_ready_o       = ~stall & ~halt_if;
+  assign id_in_ready_o = ~stall & ~halt_if & ~retain_id;
 
   // kill instr in IF-ID pipeline reg that are done, or if a
   // multicycle instr causes an exception for example
-  // halt_if is another kind of stall, where the instr_valid bit must remain
+  // retain_id is another kind of stall, where the instr_valid bit must remain
   // set (unless flush_id is set also). It cannot be factored directly into
   // stall as this causes a combinational loop.
-  assign instr_valid_clear_o = ~(stall | halt_if) | flush_id;
+  assign instr_valid_clear_o = ~(stall | retain_id) | flush_id;
 
   // update registers
   always_ff @(posedge clk_i or negedge rst_ni) begin : update_regs
@@ -713,9 +833,14 @@ module ibex_controller #(
   // Assertions //
   ////////////////
 
+  `ASSERT(AlwaysInstrClearOnMispredict, nt_branch_mispredict_o -> instr_valid_clear_o)
+
   // Selectors must be known/valid.
   `ASSERT(IbexCtrlStateValid, ctrl_fsm_cs inside {
       RESET, BOOT_SET, WAIT_SLEEP, SLEEP, FIRST_FETCH, DECODE, FLUSH,
       IRQ_TAKEN, DBG_TAKEN_IF, DBG_TAKEN_ID})
+
+  // The speculative branch signal should be set whenever the actual branch signal is set
+  `ASSERT(IbexSpecImpliesSetPC, pc_set_o |-> pc_set_spec_o)
 
 endmodule

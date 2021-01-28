@@ -4,8 +4,6 @@
 
 class uart_agent_cfg extends dv_base_agent_cfg;
 
-  bit is_active     = 1'b1; // active driver or passive monitor
-  bit en_cov        = 1'b1; // enable coverage
   bit en_rx_checks  = 1'b1; // enable RX checks (implemented in monitor)
   bit en_tx_checks  = 1'b1; // enable TX checks (implemented in monitor)
   bit en_rx_monitor = 1'b1; // enable RX monitor
@@ -17,9 +15,10 @@ class uart_agent_cfg extends dv_base_agent_cfg;
   bit odd_parity;
 
   // Logger settings.
-  bit en_logger         = 1'b0; // enable logger on tx
-  bit use_rx_for_logger = 1'b0; // use rx instead of tx
-  string logger_msg_id  = "UART_LOGGER";
+  bit en_logger           = 1'b0; // enable logger on tx
+  bit use_rx_for_logger   = 1'b0; // use rx instead of tx
+  string logger_id        = "uart_logger";
+  bit write_logs_to_file  = 1'b1;
 
   // reset is controlled at upper seq-level as no reset pin on uart interface
   bit under_reset;
@@ -27,9 +26,14 @@ class uart_agent_cfg extends dv_base_agent_cfg;
   // interface handle used by driver, monitor & the sequencer
   virtual uart_if vif;
 
+  // The actual UART clock is not perfectly aligned to the baud rate. The clock btw transmitter and
+  // receiver can have certain difference
+  // driver is using perfect baud rate. Here is the max allowed clock drift for design comparing the
+  // ideal baud rate, This number must be less than 50
+  // if set 20 here, received data must be ready to sample and stable at 30%-70% of the cycle
+  local uint max_drift_cycle_pct = 25;
+
   `uvm_object_utils_begin(uart_agent_cfg)
-    `uvm_field_int(is_active,     UVM_DEFAULT)
-    `uvm_field_int(en_cov,        UVM_DEFAULT)
     `uvm_field_int(en_rx_checks,  UVM_DEFAULT)
     `uvm_field_int(en_tx_checks,  UVM_DEFAULT)
     `uvm_field_int(en_tx_monitor, UVM_DEFAULT)
@@ -49,6 +53,15 @@ class uart_agent_cfg extends dv_base_agent_cfg;
   function void set_parity(bit en_parity, bit odd_parity);
     this.en_parity = en_parity;
     this.odd_parity = odd_parity;
+  endfunction
+
+  function void set_max_drift_cycle_pct(uint pct);
+    `DV_CHECK_LT_FATAL(pct, 50)
+    max_drift_cycle_pct = pct;
+  endfunction
+
+  function int get_max_drift_cycle_pct();
+    return max_drift_cycle_pct;
   endfunction
 
   virtual function void reset_asserted();

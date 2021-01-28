@@ -9,7 +9,8 @@ package aes_model_dpi_pkg;
   import "DPI-C" context function void c_dpi_aes_crypt_block(
     input  bit                impl_i,    // 0 = C model, 1 = OpenSSL/BoringSSL
     input  bit                op_i,      // 0 = encrypt, 1 = decrypt
-    input  bit          [2:0] mode_i,    // 3'b001 = ECB, 3'b010 = CBC, 3'b100 = CTR
+    input  bit          [5:0] mode_i,    // 6'b00_0001 = ECB, 6'00_b0010 = CBC, 6'b00_0100 = CFB,
+                                         // 6'b00_1000 = OFB, 6'b01_0000 = CTR, 6'b10_0000 = NONE
     input  bit[3:0][3:0][7:0] iv_i,
     input  bit          [2:0] key_len_i, // 3'b001 = 128b, 3'b010 = 192b, 3'b100 = 256b
     input  bit    [7:0][31:0] key_i,
@@ -20,7 +21,8 @@ package aes_model_dpi_pkg;
   import "DPI-C" context function void c_dpi_aes_crypt_message(
     input  bit              impl_i,    // 0 = C model, 1 = OpenSSL/BoringSSL
     input  bit              op_i,      // 0 = encrypt, 1 = decrypt
-    input  bit        [2:0] mode_i,    // 3'b001 = ECB, 3'b010 = CBC, 3'b100 = CTR
+    input  bit        [5:0] mode_i,    // 6'b00_0001 = ECB, 6'00_b0010 = CBC, 6'b00_0100 = CFB,
+                                       // 6'b00_1000 = OFB, 6'b01_0000 = CTR, 6'b10_0000 = NONE
     input  bit  [3:0][31:0] iv_i,
     input  bit        [2:0] key_len_i, // 3'b001 = 128b, 3'b010 = 192b, 3'b100 = 256b
     input  bit  [7:0][31:0] key_i,
@@ -61,7 +63,8 @@ package aes_model_dpi_pkg;
   function automatic void sv_dpi_aes_crypt_block(
     input  bit             impl_i,    // 0 = C model, 1 = OpenSSL/BoringSSL
     input  bit             op_i,      // 0 = encrypt, 1 = decrypt
-    input  bit       [2:0] mode_i,    // 3'b001 = ECB, 3'b010 = CBC, 3'b100 = CTR
+    input  bit       [5:0] mode_i,    // 6'b00_0001 = ECB, 6'00_b0010 = CBC, 6'b00_0100 = CFB,
+                                      // 6'b00_1000 = OFB, 6'b01_0000 = CTR, 6'b10_0000 = NONE
     input  bit [3:0][31:0] iv_i,
     input  bit       [2:0] key_len_i, // 3'b001 = 128b, 3'b010 = 192b, 3'b100 = 256b
     input  bit [7:0][31:0] key_i,
@@ -74,6 +77,5 @@ package aes_model_dpi_pkg;
     c_dpi_aes_crypt_block(impl_i, op_i, mode_i, iv_in, key_len_i, key_i, data_in, data_out);
     data_o  = aes_transpose(data_out);
     return;
-  endfunction
-
+  endfunction // sv_dpi_aes_crypt_block
 endpackage

@@ -11,10 +11,9 @@ import os.path
 import re
 import sys
 
+import dashboard.dashboard_validate as dashboard_validate
 import hjson
 import mistletoe as mk
-
-import dashboard.dashboard_validate as dashboard_validate
 
 
 def genout(outfile, msg):
@@ -67,9 +66,9 @@ def get_linked_design_spec(obj):
 
 # Provide the link to the DV plan.
 def get_linked_dv_plan(obj):
-    if 'dv_plan' in obj.keys():
-        url = docs_server + "/" + html.escape(obj['dv_plan'])
-        return "<span title='DV Plan'><a href=\"{}\">DV</a></span>".format(url)
+    if 'dv_doc' in obj.keys():
+        url = docs_server + "/" + html.escape(obj['dv_doc'])
+        return "<span title='DV Document'><a href=\"{}\">DV</a></span>".format(url)
     else:
         return ""
 
@@ -85,7 +84,8 @@ def get_linked_version(rev):
 
 # Link D/V stages with the checklist table.
 def get_linked_checklist(obj, rev, stage, is_latest_rev=True):
-    if not stage or stage not in rev: return ""
+    if not stage or stage not in rev:
+        return ""
 
     url = ""
     in_page_ref = ""
@@ -106,14 +106,19 @@ def get_linked_checklist(obj, rev, stage, is_latest_rev=True):
                                in_page_ref)
     else:
         # There is no checklist available, so point to the template.
+        # doc/project/hw_checklist.md.tpl is a symlink to ip_checklist.md.tpl,
+        # and github doesn't auto-render symlinks, so we have to use the url
+        # where the symlink points to.
         url = "https://github.com/lowrisc/opentitan/tree/master/"
-        url += "doc/project/ip_checklist.md.tpl"
+        url += "util/uvmdvgen/checklist.md.tpl"
 
     return "<a href=\"{}\">{}</a>".format(url, html.escape(rev[stage]))
 
+
 # Link S stages with the checklist table.
 def get_linked_sw_checklist(obj, rev, stage, is_latest_rev=True):
-    if not stage or stage not in rev: return ""
+    if not stage or stage not in rev:
+        return ""
 
     url = ""
     in_page_ref = ""
@@ -144,54 +149,42 @@ def get_linked_sw_checklist(obj, rev, stage, is_latest_rev=True):
 # Hover text over each L, D, V, S indicates the stage mapping.
 # D, V, and S stages link to actual checklist items.
 def get_development_stage(obj, rev, is_latest_rev=True):
-    if "life_stage" not in rev: return "&nbsp;"
+    if "life_stage" not in rev:
+        return "&nbsp;"
 
     life_stage = rev['life_stage']
-    life_stage_mapping = convert_stage(life_stage)
-    separator = " : "
+    life_stage_html = "<span title='{}'>{}</span>".format(
+        html.escape(convert_stage(life_stage)), html.escape(life_stage))
 
     if life_stage != 'L0' and 'design_stage' in rev:
         design_stage = rev['design_stage']
-        design_stage_mapping = convert_stage(design_stage)
+        design_stage_html = "<span title='{}'>{}</span>".format(
+            html.escape(convert_stage(design_stage)),
+            get_linked_checklist(obj, rev, 'design_stage', is_latest_rev))
     else:
-        design_stage = None
+        design_stage_html = "-"
 
     if life_stage != 'L0' and 'verification_stage' in rev:
         verification_stage = rev['verification_stage']
-        verification_stage_mapping = convert_stage(verification_stage)
+        verification_stage_html = "<span title='{}'>{}</span>".format(
+            html.escape(convert_stage(verification_stage)),
+            get_linked_checklist(obj, rev, 'verification_stage',
+                                 is_latest_rev))
     else:
-        verification_stage = None
+        verification_stage_html = "-"
 
     if life_stage != 'L0' and 'dif_stage' in rev:
         dif_stage = rev['dif_stage']
-        dif_stage_mapping = convert_stage(dif_stage)
+        dif_stage_html = "<span title='{}'>{}</span>".format(
+            html.escape(convert_stage(dif_stage)),
+            get_linked_sw_checklist(obj, rev, 'dif_stage', is_latest_rev))
     else:
-        dif_stage = None
+        dif_stage_html = "-"
 
-    result = "<span title='{}'>{}</span>".format(
-        html.escape(life_stage_mapping), html.escape(life_stage))
-
-    if design_stage:
-        result += separator
-        result += "<span title='{}'>{}</span>".format(
-            html.escape(design_stage_mapping),
-            get_linked_checklist(obj, rev, 'design_stage', is_latest_rev))
-
-    if verification_stage:
-        result += separator
-        result += "<span title='{}'>{}</span>".format(
-            html.escape(verification_stage_mapping),
-            get_linked_checklist(obj, rev, 'verification_stage',
-                                 is_latest_rev))
-
-    if dif_stage:
-        result += separator
-        result += "<span title='{}'>{}</span>".format(
-            html.escape(dif_stage_mapping),
-            get_linked_sw_checklist(obj, rev, 'dif_stage',
-                                    is_latest_rev))
-
-    return result
+    return [
+        life_stage_html, design_stage_html, verification_stage_html,
+        dif_stage_html
+    ]
 
 
 # Create dashboard of hardware IP development status
@@ -209,7 +202,7 @@ def gen_dashboard_html(hjson_path, outfile):
 
     # If `revisions` field doesn't exist, the tool assumes the Hjson
     # as the previous project format, which has only one version entry.
-    if not "revisions" in obj:
+    if "revisions" not in obj:
         print_version1_format(obj, outfile)
     else:
         print_multiversion_format(obj, outfile)
@@ -218,27 +211,25 @@ def gen_dashboard_html(hjson_path, outfile):
 
 # Version 1 (single version) format
 def print_version1_format(obj, outfile):
-    life_stage = obj['life_stage']
-    life_stage_mapping = convert_stage(obj['life_stage'])
-
     # yapf: disable
     genout(outfile, "      <tr>\n")
-    name = html.escape(obj['name'])
     genout(outfile, "        <td class=\"fixleft\">" +
                     get_linked_design_spec(obj) + "</td>\n")
-    genout(outfile, "        <td class=\"hw-stage\">" +
+    genout(outfile, "        <td class=\"dv-plan\">" +
                     get_linked_dv_plan(obj) + "</td>\n")
-    genout(outfile, "        <td class=\"hw-stage\">" +
+    genout(outfile, "        <td class=\"version\">" +
                     get_linked_version(obj) + "</td>\n")
-    genout(outfile, "        <td class=\"hw-stage\"><span class='hw-stage'>" +
-                    get_development_stage(obj, obj) + "</span></td>\n")
+
+    for stage_html in get_development_stage(obj, obj):
+        genout(outfile,
+               "        <td class=\"hw-stage\">" + stage_html + "</td>\n")
 
     if 'notes' in obj:
         genout(outfile,
-                    "        <td>" + mk.markdown(obj['notes']).rstrip() + "</td>\n")
+               "        <td>" + mk.markdown(obj['notes']).rstrip() + "</td>\n")
     else:
         genout(outfile,
-                    "        <td><p>&nbsp;</p></td>\n")
+               "        <td><p>&nbsp;</p></td>\n")
     genout(outfile, "      </tr>\n")
     # yapf: enable
 
@@ -256,7 +247,7 @@ def print_multiversion_format(obj, outfile):
         if len(revisions) == 1:
             outstr += "        <td class='fixleft'>"
             outstr += get_linked_design_spec(obj) + "</td>\n"
-            outstr += "        <td class='hw-stage'>"
+            outstr += "        <td class='dv-plan'>"
             outstr += get_linked_dv_plan(obj) + "</td>\n"
         # Print out the module name in the first entry only
         elif i == 0:
@@ -268,13 +259,14 @@ def print_multiversion_format(obj, outfile):
             outstr += get_linked_dv_plan(obj) + "</td>\n"
 
         # Version
-        outstr += "        <td class=\"hw-stage\">"
+        outstr += "        <td class=\"version\">"
         outstr += get_linked_version(rev) + "</td>\n"
 
         # Development Stage
-        outstr += "        <td class=\"hw-stage\"><span class='hw-stage'>"
-        outstr += get_development_stage(obj, rev, (i == latest_rev))
-        outstr += "</span></td>\n"
+        for stage_html in get_development_stage(obj, rev, (i == latest_rev)):
+            outstr += "        <td class=\"hw-stage\"><span class='hw-stage'>"
+            outstr += stage_html
+            outstr += "</span></td>\n"
 
         # Notes
         if 'notes' in rev and rev['notes'] != '':
@@ -318,21 +310,18 @@ def gen_specboard_html(hjson_path, rel_hjson_path, outfile):
     genout(outfile, "        <td class=\"fixleft\">" +
                     html.escape(obj['name']) + "</td>\n")
     if os.path.exists(design_spec_md):
-        genout(outfile,
-                    "        <td class=\"fixleft\"><a href=\"" +
-                    html.escape(design_spec_html) + "\">" +
-                    "design spec</a>\n")
+        genout(outfile, "        <td class=\"fixleft\"><a href=\"" +
+               html.escape(design_spec_html) + "\">" +
+               "design spec</a>\n")
     else:
-        genout(outfile,
-                    "        <td>&nbsp;</td>\n")
+        genout(outfile, "        <td>&nbsp;</td>\n")
     if os.path.exists(dv_plan_md):
-        genout(outfile,
-                    "        <td class=\"fixleft\"><a href=\"" +
-                    html.escape(dv_plan_html) + "\">" +
-                    "DV plan</a>\n")
+        genout(outfile, "        <td class=\"fixleft\"><a href=\"" +
+               html.escape(dv_plan_html) + "\">" +
+               "DV document</a>\n")
     else:
-        genout(outfile,
-                    "        <td>&nbsp;</td>\n")
+        genout(outfile, "        <td>&nbsp;</td>\n")
+
     genout(outfile, "      </tr>\n")
     # yapf: enable
     return

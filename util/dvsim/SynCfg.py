@@ -12,25 +12,19 @@ import hjson
 from tabulate import tabulate
 
 from OneShotCfg import OneShotCfg
-from utils import subst_wildcards
+from utils import VERBOSE, print_msg_list, subst_wildcards
 
 
 class SynCfg(OneShotCfg):
     """Derivative class for synthesis purposes.
     """
-    def __init__(self, flow_cfg_file, proj_root, args):
-        super().__init__(flow_cfg_file, proj_root, args)
 
-    def __post_init__(self):
-        super().__post_init__()
+    flow = 'syn'
+
+    def __init__(self, flow_cfg_file, hjson_data, args, mk_config):
+        super().__init__(flow_cfg_file, hjson_data, args, mk_config)
         # Set the title for synthesis results.
         self.results_title = self.name.upper() + " Synthesis Results"
-
-    @staticmethod
-    def create_instance(flow_cfg_file, proj_root, args):
-        '''Create a new instance of this class as with given parameters.
-        '''
-        return SynCfg(flow_cfg_file, proj_root, args)
 
     def gen_results_summary(self):
         '''
@@ -41,7 +35,11 @@ class SynCfg(OneShotCfg):
         log.info("Create summary of synthesis results")
 
         results_str = "## " + self.results_title + " (Summary)\n\n"
-        results_str += "### " + self.timestamp_long + "\n\n"
+        results_str += "### " + self.timestamp_long + "\n"
+        if self.revision:
+            results_str += "### " + self.revision + "\n"
+        results_str += "### Branch: " + self.branch + "\n"
+        results_str += "\n"
 
         self.results_summary_md = results_str + "\nNot supported yet.\n"
 
@@ -50,7 +48,7 @@ class SynCfg(OneShotCfg):
         # Return only the tables
         return self.results_summary_md
 
-    def _gen_results(self):
+    def _gen_results(self, results):
         # '''
         # The function is called after the regression has completed. It looks
         # for a regr_results.hjson file with aggregated results from the
@@ -122,7 +120,7 @@ class SynCfg(OneShotCfg):
         #     }
         # }
         #
-        # note that if this is a master config, the results will
+        # note that if this is a primary config, the results will
         # be generated using the _gen_results_summary function
         # '''
 
@@ -148,6 +146,9 @@ class SynCfg(OneShotCfg):
         # Generate results table for runs.
         results_str = "## " + self.results_title + "\n\n"
         results_str += "### " + self.timestamp_long + "\n"
+        if self.revision:
+            results_str += "### " + self.revision + "\n"
+        results_str += "### Branch: " + self.branch + "\n"
         results_str += "### Synthesis Tool: " + self.tool.upper() + "\n\n"
 
         # TODO: extend this to support multiple build modes
@@ -161,7 +162,7 @@ class SynCfg(OneShotCfg):
             log.info("looking for result data file at %s", result_data)
 
             try:
-                with open(result_data, "r") as results_file:
+                with result_data.open() as results_file:
                     self.result = hjson.load(results_file, use_decimal=True)
             except IOError as err:
                 log.warning("%s", err)
@@ -349,14 +350,50 @@ class SynCfg(OneShotCfg):
             else:
                 results_str += "No power report found\n\n"
 
+            # Append detailed messages if they exist
+            # Note that these messages are omitted in publication mode
+            hdr_key_pairs = [("Flow Warnings", "flow_warnings"),
+                             ("Flow Errors", "flow_errors"),
+                             ("Analyze Warnings", "analyze_warnings"),
+                             ("Analyze Errors", "analyze_errors"),
+                             ("Elab Warnings", "elab_warnings"),
+                             ("Elab Errors", "elab_errors"),
+                             ("Compile Warnings", "compile_warnings"),
+                             ("Compile Errors", "compile_errors")]
+
+            # Synthesis fails if any warning or error message has occurred
+            self.errors_seen = False
+            fail_msgs = ""
+            for _, key in hdr_key_pairs:
+                if key in self.result['messages']:
+                    if self.result['messages'].get(key):
+                        self.errors_seen = True
+                        break
+
+            if self.errors_seen:
+                fail_msgs += "\n### Errors and Warnings for Build Mode `'" + mode.name + "'`\n"
+                for hdr, key in hdr_key_pairs:
+                    msgs = self.result['messages'].get(key)
+                    fail_msgs += print_msg_list("#### " + hdr, msgs, self.max_msg_count)
+
+            # the email and published reports will default to self.results_md if they are
+            # empty. in case they need to be sanitized, override them and do not append
+            # detailed messages.
+            if self.sanitize_email_results:
+                self.email_results_md = results_str
+            if self.sanitize_publish_results:
+                self.publish_results_md = results_str
+
+            # locally generated result always contains all details
+            self.results_md = results_str + fail_msgs
+
             # TODO: add support for pie / bar charts for area splits and
             # QoR history
 
-        self.results_md = results_str
         # Write results to the scratch area
-        self.results_file = self.scratch_path + "/results_" + self.timestamp + ".md"
-        log.info("Detailed results are available at %s", self.results_file)
-        with open(self.results_file, 'w') as f:
+        results_file = self.scratch_path + "/results_" + self.timestamp + ".md"
+        with open(results_file, 'w') as f:
             f.write(self.results_md)
 
+        log.log(VERBOSE, "[results page]: [%s] [%s]", self.name, results_file)
         return self.results_md

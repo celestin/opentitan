@@ -6,12 +6,15 @@
  * Boot ROM runtime initialization code.
  */
 
-  // NOTE: The "ax" flag below is necessary to ensure that this section 
+  // NOTE: The "ax" flag below is necessary to ensure that this section
   // is allocated executable space in ROM by the linker.
   .section .crt, "ax"
 
+  .extern crt_section_clear
+  .extern crt_section_copy
+
 /**
- * Entry point after reset. This symbol is jumped to from the handler 
+ * Entry point after reset. This symbol is jumped to from the handler
  * for IRQ 0x80.
  *
  * Sets up the stack, then jumps to `_start`.
@@ -52,7 +55,7 @@ _reset_start:
   li  x31, 0x0
 
   // Set up the stack.
-  la  sp, _stack_start
+  la  sp, _stack_end
 
   // Set up the global pointer. This requires that we disable linker relaxations
   // (or it will be relaxed to `mv gp, gp`).
@@ -73,59 +76,46 @@ _start:
   .globl _start
 
   // Zero out the `.bss` segment.
-  //
-  // We use `t0` and `t1` to represent the start and end pointers
-  // of `.bss`.
-  la  t0, _bss_start
-  la  t1, _bss_end
-  bge t0, t1, bss_zero_loop_end
-bss_zero_loop:
-  sw    zero, 0(t0)
-  addi  t0, t0, 0x4
-  ble   t0, t1, bss_zero_loop
-bss_zero_loop_end:
+  la   a0, _bss_start
+  la   a1, _bss_end
+  call crt_section_clear
 
   // Zero out the stack
   //
-  // We use `t0` and `t1` to represent the start and end pointers of the stack.
   // As the stack grows downwards and we zero going forwards the start pointer
-  // starts as _stack_end and the end pointer at _stack_start - 4
-  la  t0, _stack_end
-  la  t1, (_stack_start - 4)
-  bge t0, t1, stack_zero_loop_end
-stack_zero_loop:
-  sw    zero, 0(t0)
-  addi  t0, t0, 0x4
-  ble   t0, t1, stack_zero_loop
-stack_zero_loop_end:
+  // starts as _stack_start and the end pointer at _stack_end.
+  la   a0, _stack_start
+  la   a1, _stack_end
+  call crt_section_clear
 
   // Initialize the `.data` segment from the `.idata` segment.
-  // 
-  // We use `t0` and `t1` to represent the start and end pointers
-  // of `.data`, `t2` to represent the start pointer of `.idata`
-  // (which has the same length as `.data`) and `t3` is a scratch
-  // register for the copy.
-  la  t0, _data_start
-  la  t1, _data_end
-  la  t2, _data_init_start
-  bge t0, t1, data_copy_loop_end
-data_copy_loop:
-  lw   t3, 0(t2)
-  sw   t3, 0(t0)
-  addi t0, t0, 0x4
-  addi t2, t2, 0x4
-  ble  t0, t1, data_copy_loop
-data_copy_loop_end:
+  la   a0, _data_start
+  la   a1, _data_end
+  la   a2, _data_init_start
+  call crt_section_copy
 
-  // Re-clobber all of the registers from above.
+  // Clobber all temporary registers.
   li t0, 0x0
   li t1, 0x0
   li t2, 0x0
   li t3, 0x0
+  li t4, 0x0
+  li t5, 0x0
+  li t6, 0x0
+
+  // Clobber all argument registers.
+  li a0, 0x0
+  li a1, 0x0
+  li a2, 0x0
+  li a3, 0x0
+  li a4, 0x0
+  li a5, 0x0
+  li a6, 0x0
+  li a7, 0x0
 
   // Jump into the C program entry point.
   call _boot_start
-  
+
   // Loop forever if _boot_start somehow returns.
 1:
   wfi

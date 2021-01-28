@@ -10,7 +10,7 @@ module nmi_gen
   import prim_esc_pkg::*;
 #(
   // leave constant
-  localparam int unsigned N_ESC_SEV = 4
+  localparam int unsigned N_ESC_SEV = 3
 ) (
   input                           clk_i,
   input                           rst_ni,
@@ -21,7 +21,8 @@ module nmi_gen
   output logic                    intr_esc0_o,
   output logic                    intr_esc1_o,
   output logic                    intr_esc2_o,
-  output logic                    intr_esc3_o,
+  // Reset Requests
+  output logic                    nmi_rst_req_o,
   // Escalation outputs
   input  esc_tx_t [N_ESC_SEV-1:0] esc_tx_i,
   output esc_rx_t [N_ESC_SEV-1:0] esc_rx_o
@@ -35,7 +36,7 @@ module nmi_gen
   nmi_gen_reg_pkg::nmi_gen_reg2hw_t reg2hw;
   nmi_gen_reg_pkg::nmi_gen_hw2reg_t hw2reg;
 
-  nmi_gen_reg_top i_reg (
+  nmi_gen_reg_top u_reg (
     .clk_i,
     .rst_ni,
     .tl_i,
@@ -52,6 +53,8 @@ module nmi_gen
   prim_intr_hw #(
     .Width(1)
   ) i_intr_esc0 (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           ( esc_en[0]                  ),
     .reg2hw_intr_enable_q_i ( reg2hw.intr_enable.esc0.q  ),
     .reg2hw_intr_test_q_i   ( reg2hw.intr_test.esc0.q    ),
@@ -62,9 +65,14 @@ module nmi_gen
     .intr_o                 ( intr_esc0_o                )
   );
 
+  assign nmi_rst_req_o = esc_en[0];
+
+
   prim_intr_hw #(
     .Width(1)
   ) i_intr_esc1 (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           ( esc_en[1]                  ),
     .reg2hw_intr_enable_q_i ( reg2hw.intr_enable.esc1.q  ),
     .reg2hw_intr_test_q_i   ( reg2hw.intr_test.esc1.q    ),
@@ -78,6 +86,8 @@ module nmi_gen
   prim_intr_hw #(
     .Width(1)
   ) i_intr_esc2 (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           ( esc_en[2]                  ),
     .reg2hw_intr_enable_q_i ( reg2hw.intr_enable.esc2.q  ),
     .reg2hw_intr_test_q_i   ( reg2hw.intr_test.esc2.q    ),
@@ -86,19 +96,6 @@ module nmi_gen
     .hw2reg_intr_state_de_o ( hw2reg.intr_state.esc2.de  ),
     .hw2reg_intr_state_d_o  ( hw2reg.intr_state.esc2.d   ),
     .intr_o                 ( intr_esc2_o                )
-  );
-
-  prim_intr_hw #(
-    .Width(1)
-  ) i_intr_esc3 (
-    .event_intr_i           ( esc_en[3]                  ),
-    .reg2hw_intr_enable_q_i ( reg2hw.intr_enable.esc3.q  ),
-    .reg2hw_intr_test_q_i   ( reg2hw.intr_test.esc3.q    ),
-    .reg2hw_intr_test_qe_i  ( reg2hw.intr_test.esc3.qe   ),
-    .reg2hw_intr_state_q_i  ( reg2hw.intr_state.esc3.q   ),
-    .hw2reg_intr_state_de_o ( hw2reg.intr_state.esc3.de  ),
-    .hw2reg_intr_state_d_o  ( hw2reg.intr_state.esc3.d   ),
-    .intr_o                 ( intr_esc3_o                )
   );
 
   /////////////////////////////////////////

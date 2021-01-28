@@ -11,20 +11,22 @@
   clock_srcs:
   {
     clk_main_i: main
-    clk_fixed_i: fixed
+    clk_fixed_i: io_div4
   }
   clock_group: infra
   reset: rst_main_ni
   reset_connections:
   {
-    rst_main_ni: sys
-    rst_fixed_ni: sys_fixed
+    rst_main_ni: rstmgr_resets.rst_sys_n[rstmgr_pkg::Domain0Sel]
+    rst_fixed_ni: rstmgr_resets.rst_sys_io_div4_n[rstmgr_pkg::Domain0Sel]
   }
+  clock_reset_export: []
   clock_connections:
   {
-    clk_main_i: clk_main_infra
-    clk_fixed_i: clk_fixed_infra
+    clk_main_i: clkmgr_clocks.clk_main_infra
+    clk_fixed_i: clkmgr_clocks.clk_io_div4_infra
   }
+  domain: "0"
   connections:
   {
     corei:
@@ -43,11 +45,18 @@
       peri
       flash_ctrl
       aes
+      entropy_src
+      csrng
+      edn0
+      edn1
       hmac
       rv_plic
       pinmux
-      alert_handler
-      nmi_gen
+      padctrl
+      otbn
+      keymgr
+      kmac
+      sram_ctrl_main
     ]
     dm_sba:
     [
@@ -57,11 +66,17 @@
       peri
       flash_ctrl
       aes
+      entropy_src
+      csrng
+      edn0
+      edn1
       hmac
       rv_plic
       pinmux
-      alert_handler
-      nmi_gen
+      padctrl
+      otbn
+      kmac
+      sram_ctrl_main
     ]
   }
   nodes:
@@ -73,6 +88,7 @@
       reset: rst_main_ni
       pipeline: "false"
       xbar: false
+      stub: false
       inst_type: rv_core_ibex
       pipeline_byp: "true"
     }
@@ -83,6 +99,7 @@
       reset: rst_main_ni
       pipeline: "false"
       xbar: false
+      stub: false
       inst_type: rv_core_ibex
       pipeline_byp: "true"
     }
@@ -93,6 +110,7 @@
       reset: rst_main_ni
       pipeline_byp: "false"
       xbar: false
+      stub: false
       inst_type: rv_dm
       pipeline: "true"
     }
@@ -111,6 +129,7 @@
         }
       ]
       xbar: false
+      stub: false
       pipeline_byp: "true"
     }
     {
@@ -128,6 +147,7 @@
         }
       ]
       xbar: false
+      stub: false
       pipeline: "true"
     }
     {
@@ -136,7 +156,7 @@
       clock: clk_main_i
       reset: rst_main_ni
       pipeline: "false"
-      inst_type: ram_1p
+      inst_type: ram_1p_scr
       addr_range:
       [
         {
@@ -145,6 +165,7 @@
         }
       ]
       xbar: false
+      stub: false
       pipeline_byp: "true"
     }
     {
@@ -162,6 +183,7 @@
         }
       ]
       xbar: false
+      stub: false
       pipeline_byp: "true"
     }
     {
@@ -171,24 +193,21 @@
       reset: rst_fixed_ni
       pipeline_byp: "false"
       xbar: true
+      stub: false
       pipeline: "true"
       addr_range:
       [
         {
+          base_addr: 0x18000000
+          size_byte: 0x1000
+        }
+        {
           base_addr: 0x40000000
-          size_byte: 0x21000
+          size_byte: 0x421000
         }
         {
-          base_addr: 0x40080000
-          size_byte: 0x1000
-        }
-        {
-          base_addr: 0x400A0000
+          base_addr: 0x40500000
           size_byte: 0x20000
-        }
-        {
-          base_addr: 0x40150000
-          size_byte: 0x1000
         }
       ]
     }
@@ -202,11 +221,12 @@
       addr_range:
       [
         {
-          base_addr: 0x40030000
+          base_addr: 0x41000000
           size_byte: 0x1000
         }
       ]
       xbar: false
+      stub: false
       pipeline: "true"
     }
     {
@@ -219,11 +239,30 @@
       addr_range:
       [
         {
-          base_addr: 0x40120000
+          base_addr: 0x41110000
           size_byte: 0x1000
         }
       ]
       xbar: false
+      stub: false
+      pipeline: "true"
+    }
+    {
+      name: kmac
+      type: device
+      clock: clk_main_i
+      rset: rst_main_ni
+      pipeline_byp: "false"
+      inst_type: kmac
+      addr_range:
+      [
+        {
+          base_addr: 0x41120000
+          size_byte: 0x1000
+        }
+      ]
+      xbar: false
+      stub: false
       pipeline: "true"
     }
     {
@@ -236,11 +275,84 @@
       addr_range:
       [
         {
-          base_addr: 0x40110000
+          base_addr: 0x41100000
           size_byte: 0x1000
         }
       ]
       xbar: false
+      stub: false
+      pipeline: "true"
+    }
+    {
+      name: entropy_src
+      type: device
+      clock: clk_main_i
+      reset: rst_main_ni
+      pipeline_byp: "false"
+      inst_type: entropy_src
+      addr_range:
+      [
+        {
+          base_addr: 0x41160000
+          size_byte: 0x1000
+        }
+      ]
+      xbar: false
+      stub: false
+      pipeline: "true"
+    }
+    {
+      name: csrng
+      type: device
+      clock: clk_main_i
+      reset: rst_main_ni
+      pipeline_byp: "false"
+      inst_type: csrng
+      addr_range:
+      [
+        {
+          base_addr: 0x41150000
+          size_byte: 0x1000
+        }
+      ]
+      xbar: false
+      stub: false
+      pipeline: "true"
+    }
+    {
+      name: edn0
+      type: device
+      clock: clk_main_i
+      reset: rst_main_ni
+      pipeline_byp: "false"
+      inst_type: edn
+      addr_range:
+      [
+        {
+          base_addr: 0x41170000
+          size_byte: 0x1000
+        }
+      ]
+      xbar: false
+      stub: false
+      pipeline: "true"
+    }
+    {
+      name: edn1
+      type: device
+      clock: clk_main_i
+      reset: rst_main_ni
+      pipeline_byp: "false"
+      inst_type: edn
+      addr_range:
+      [
+        {
+          base_addr: 0x41180000
+          size_byte: 0x1000
+        }
+      ]
+      xbar: false
+      stub: false
       pipeline: "true"
     }
     {
@@ -252,12 +364,13 @@
       addr_range:
       [
         {
-          base_addr: 0x40090000
+          base_addr: 0x41010000
           size_byte: 0x1000
         }
       ]
       pipeline_byp: "false"
       xbar: false
+      stub: false
       pipeline: "true"
     }
     {
@@ -269,45 +382,86 @@
       addr_range:
       [
         {
-          base_addr: 0x40070000
+          base_addr: 0x40460000
           size_byte: 0x1000
         }
       ]
       pipeline_byp: "false"
       xbar: false
+      stub: false
       pipeline: "true"
     }
     {
-      name: alert_handler
+      name: padctrl
       type: device
       clock: clk_main_i
-      inst_type: alert_handler
-      pipeline_byp: "false"
+      reset: rst_fixed_ni
+      inst_type: padctrl
       addr_range:
       [
         {
-          base_addr: 0x40130000
+          base_addr: 0x40470000
           size_byte: 0x1000
         }
       ]
+      pipeline_byp: "false"
       xbar: false
+      stub: false
       pipeline: "true"
     }
     {
-      name: nmi_gen
+      name: otbn
       type: device
       clock: clk_main_i
-      inst_type: nmi_gen
+      reset: rst_main_ni
       pipeline_byp: "false"
+      inst_type: otbn
       addr_range:
       [
         {
-          base_addr: 0x40140000
+          base_addr: 0x411D0000
+          size_byte: 0x10000
+        }
+      ]
+      xbar: false
+      stub: false
+      pipeline: "true"
+    }
+    {
+      name: keymgr
+      type: device
+      clock: clk_main_i
+      reset: rst_main_ni
+      pipeline_byp: "false"
+      inst_type: keymgr
+      addr_range:
+      [
+        {
+          base_addr: 0x41130000
           size_byte: 0x1000
         }
       ]
       xbar: false
+      stub: false
       pipeline: "true"
+    }
+    {
+      name: sram_ctrl_main
+      type: device
+      clock: clk_main_i
+      reset: rst_main_ni
+      pipeline: "false"
+      inst_type: sram_ctrl
+      addr_range:
+      [
+        {
+          base_addr: 0x411C0000
+          size_byte: 0x1000
+        }
+      ]
+      xbar: false
+      stub: false
+      pipeline_byp: "true"
     }
   ]
   clock: clk_main_i

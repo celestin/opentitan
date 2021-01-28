@@ -6,6 +6,9 @@
 
 package uart_reg_pkg;
 
+  // Address width within the block
+  parameter int BlockAw = 6;
+
   ////////////////////////////
   // Typedefs for registers //
   ////////////////////////////
@@ -308,27 +311,27 @@ package uart_reg_pkg;
   // Internal design logic to register //
   ///////////////////////////////////////
   typedef struct packed {
-    uart_hw2reg_intr_state_reg_t intr_state; // [64:57]
-    uart_hw2reg_status_reg_t status; // [56:45]
-    uart_hw2reg_rdata_reg_t rdata; // [44:36]
-    uart_hw2reg_fifo_ctrl_reg_t fifo_ctrl; // [35:25]
-    uart_hw2reg_fifo_status_reg_t fifo_status; // [24:25]
-    uart_hw2reg_val_reg_t val; // [24:25]
+    uart_hw2reg_intr_state_reg_t intr_state; // [64:49]
+    uart_hw2reg_status_reg_t status; // [48:43]
+    uart_hw2reg_rdata_reg_t rdata; // [42:35]
+    uart_hw2reg_fifo_ctrl_reg_t fifo_ctrl; // [34:28]
+    uart_hw2reg_fifo_status_reg_t fifo_status; // [27:16]
+    uart_hw2reg_val_reg_t val; // [15:0]
   } uart_hw2reg_t;
 
   // Register Address
-  parameter logic [5:0] UART_INTR_STATE_OFFSET = 6'h 0;
-  parameter logic [5:0] UART_INTR_ENABLE_OFFSET = 6'h 4;
-  parameter logic [5:0] UART_INTR_TEST_OFFSET = 6'h 8;
-  parameter logic [5:0] UART_CTRL_OFFSET = 6'h c;
-  parameter logic [5:0] UART_STATUS_OFFSET = 6'h 10;
-  parameter logic [5:0] UART_RDATA_OFFSET = 6'h 14;
-  parameter logic [5:0] UART_WDATA_OFFSET = 6'h 18;
-  parameter logic [5:0] UART_FIFO_CTRL_OFFSET = 6'h 1c;
-  parameter logic [5:0] UART_FIFO_STATUS_OFFSET = 6'h 20;
-  parameter logic [5:0] UART_OVRD_OFFSET = 6'h 24;
-  parameter logic [5:0] UART_VAL_OFFSET = 6'h 28;
-  parameter logic [5:0] UART_TIMEOUT_CTRL_OFFSET = 6'h 2c;
+  parameter logic [BlockAw-1:0] UART_INTR_STATE_OFFSET = 6'h 0;
+  parameter logic [BlockAw-1:0] UART_INTR_ENABLE_OFFSET = 6'h 4;
+  parameter logic [BlockAw-1:0] UART_INTR_TEST_OFFSET = 6'h 8;
+  parameter logic [BlockAw-1:0] UART_CTRL_OFFSET = 6'h c;
+  parameter logic [BlockAw-1:0] UART_STATUS_OFFSET = 6'h 10;
+  parameter logic [BlockAw-1:0] UART_RDATA_OFFSET = 6'h 14;
+  parameter logic [BlockAw-1:0] UART_WDATA_OFFSET = 6'h 18;
+  parameter logic [BlockAw-1:0] UART_FIFO_CTRL_OFFSET = 6'h 1c;
+  parameter logic [BlockAw-1:0] UART_FIFO_STATUS_OFFSET = 6'h 20;
+  parameter logic [BlockAw-1:0] UART_OVRD_OFFSET = 6'h 24;
+  parameter logic [BlockAw-1:0] UART_VAL_OFFSET = 6'h 28;
+  parameter logic [BlockAw-1:0] UART_TIMEOUT_CTRL_OFFSET = 6'h 2c;
 
 
   // Register Index

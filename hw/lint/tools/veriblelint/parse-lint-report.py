@@ -5,6 +5,7 @@
 r"""Parses lint report and dump filtered messages in hjson format.
 """
 import argparse
+import logging as log
 import re
 import sys
 from pathlib import Path
@@ -41,11 +42,30 @@ def get_results(resdir):
         # check the report file for lint INFO, WARNING and ERRORs
         with Path(resdir).joinpath('lint.log').open() as f:
             full_file = f.read()
-            err_warn_patterns = {("errors", r"^ERROR: .*"),
-                                 ("errors", r"^Error: .*"),
-                                 ("warnings", r"^WARNING: .*"),
-                                 ("warnings", r"^Warning: .* "),
-                                 ("lint_warnings", r"^.*\[Style:.*")}
+            err_warn_patterns = {
+                # The lint failed error can be ignored, since
+                # Fusesoc will always return this error if lint warnings have
+                # been found. We have a way of capturing the lint warnings
+                # explicitly in this parsing script, hence this error is redundant
+                # and we decided not to report it in the dashboard.
+                ("errors",
+                 r"^(?!ERROR: Failed to run .* Lint failed)ERROR: .*"),
+                ("errors", r"^Error: .*"),
+                ("errors", r"^E .*"),
+                ("errors", r"^F .*"),
+                # TODO(https://github.com/olofk/edalize/issues/90):
+                # this is a workaround until we actually have native Edalize
+                # support for JasperGold and "formal" targets
+                ("warnings",
+                 r"^(?!WARNING: Unknown item formal in section Target)WARNING: .*"
+                 # TODO(https://github.com/lowRISC/ibex/issues/1033):
+                 # remove once this has been fixed in Edalize or in the corefile.
+                 r"^(?!WARNING: Unknown item symbiyosis in section Target)WARNING: .*"
+                 ),
+                ("warnings", r"^Warning: .* "),
+                ("warnings", r"^W .*"),
+                ("lint_warnings", r"^.*\[Style:.*")
+            }
             extract_messages(full_file, err_warn_patterns, results)
     except IOError as err:
         results["errors"] += ["IOError: %s" % err]
@@ -83,7 +103,9 @@ def main():
     parser.add_argument('--outdir',
                         type=str,
                         default="./",
-                        help="Output directory for the 'results.hjson' file. Defaults to '%(default)s'")
+                        help="""
+                        Output directory for the 'results.hjson' file.
+                        Defaults to '%(default)s'""")
 
     args = parser.parse_args()
     results = get_results(args.repdir)
@@ -97,12 +119,13 @@ def main():
 
     # return nonzero status if any warnings or errors are present
     # lint infos do not count as failures
-    nr_errors = len(results["errors"]) + len(results["lint_errors"])
-    nr_warnings = len(results["warnings"]) + len(results["lint_warnings"])
-    print("Lint not successful, got %d warnings and %d errors." %
-          (nr_warnings, nr_errors))
-    if nr_errors > 0 and nr_warnings > 0:
+    n_errors = len(results["errors"]) + len(results["lint_errors"])
+    n_warnings = len(results["warnings"]) + len(results["lint_warnings"])
+    if n_errors > 0 or n_warnings > 0:
+        log.info("Found %d lint errors and %d lint warnings", n_errors, n_warnings)
         sys.exit(1)
+
+    log.info("Lint logfile parsed succesfully")
     sys.exit(0)
 
 

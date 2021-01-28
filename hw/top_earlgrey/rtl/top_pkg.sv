@@ -12,9 +12,10 @@ localparam int TL_DIW=1;    // d_sink
 localparam int TL_DUW=16;   // d_user
 localparam int TL_DBW=(TL_DW>>3);
 localparam int TL_SZW=$clog2($clog2(TL_DBW)+1);
-localparam int FLASH_BANKS=2;
-localparam int FLASH_PAGES_PER_BANK=256;
-localparam int FLASH_WORDS_PER_PAGE=256;
-localparam int FLASH_BYTES_PER_WORD=4;
+localparam int NUM_AST_ALERTS=7;
+localparam int NUM_IO_RAILS=2;
+localparam int ENTROPY_STREAM=4;
+localparam int ADC_CHANNELS=2;
+localparam int ADC_DATAW=10;
 
 endpackage

@@ -6,11 +6,7 @@
 # Documentation at https://aka.ms/yaml
 
 variables:
-  VERILATOR_VERSION: 4.028
-  VERILATOR_PATH: /opt/buildcache/verilator/$(VERILATOR_VERSION)
-  RISCV_TOOLCHAIN_TAR_VERSION: 20200323-1
-  RISCV_COMPLIANCE_GIT_VERSION: 844c6660ef3f0d9b96957991109dfd80cc4938e2
-  VERIBLE_VERSION: v0.0-266-g9e55307
+- template: ci/vars.yml
 
 trigger:
   batch: true
@@ -36,72 +32,9 @@ jobs:
   pool:
     vmImage: "ubuntu-16.04"
   steps:
-  # Installing six is a workaround for pip dependency resolution: six is already
-  # installed as system package with a version below the required one.
-  # Explicitly installing six through pip gets us a supported version.
-  #
-  # Updating pip and setuptools is required to have these tools properly parse
-  # Python-version metadata, which some packages uses to specify that an older
-  # version of a package must be used for a certain Python version. If that
-  # information is not read, pip installs the latest version, which then fails
-  # to run.
   - bash: |
-      sudo apt-get install -y \
-          python3 \
-          python3-pip \
-          python3-setuptools \
-          srecord \
-          zlib1g-dev \
-          git \
-          make \
-          autoconf \
-          g++ \
-          flex \
-          bison \
-          curl \
-          libelf-dev \
-          clang-format \
-        && sudo pip3 install -U setuptools pip six \
-        && sudo pip3 install -U -r python-requirements.txt
-    displayName: Install dependencies
-
-  - bash: |
-      set -e
-      mkdir -p build/verible
-      cd build/verible
-      curl -Ls -o verible.tar.gz https://github.com/google/verible/releases/download/$(VERIBLE_VERSION)/verible-$(VERIBLE_VERSION)-Ubuntu-16.04-xenial-x86_64.tar.gz
-      sudo mkdir -p /tools/verible && sudo chmod 777 /tools/verible
-      tar -C /tools/verible -xf verible.tar.gz --strip-components=1
-      echo "##vso[task.setvariable variable=PATH]/tools/verible/bin:$PATH"
-    displayName: Install Verible
-
-  - bash: |
-      set -e
-      if [ ! -d $(VERILATOR_PATH) ]; then
-        echo "Building verilator (no cached build found)"
-        mkdir -p build/verilator
-        cd build/verilator
-        curl -Ls -o verilator.tgz https://www.veripool.org/ftp/verilator-$(VERILATOR_VERSION).tgz
-        tar -xf verilator.tgz
-        cd verilator-$(VERILATOR_VERSION)
-        ./configure --prefix=$(VERILATOR_PATH)
-        make -j$(nproc)
-        mkdir -p $VERILATOR_PATH
-        make install
-      else
-        echo "Re-using cached verilator build"
-      fi
-      echo "##vso[task.setvariable variable=PATH]$VERILATOR_PATH/bin:$PATH"
-    displayName: Build and install Verilator
-
-  - bash: |
-      export TOOLCHAIN_URL=https://github.com/lowRISC/lowrisc-toolchains/releases/download/${RISCV_TOOLCHAIN_TAR_VERSION}/lowrisc-toolchain-gcc-rv32imc-${RISCV_TOOLCHAIN_TAR_VERSION}.tar.xz
-      mkdir -p build/toolchain
-      curl -Ls -o build/toolchain/rv32-toolchain.tar.xz $TOOLCHAIN_URL
-      sudo mkdir -p /tools/riscv && sudo chmod 777 /tools/riscv
-      tar -C /tools/riscv -xf build/toolchain/rv32-toolchain.tar.xz --strip-components=1
-      echo "##vso[task.setvariable variable=PATH]/tools/riscv/bin:$PATH"
-    displayName: Get precompiled RISC-V toolchain
+      ci/install-build-deps.sh
+    displayName: Install build dependencies
 
   - bash: |
       echo $PATH
@@ -110,22 +43,11 @@ jobs:
       fusesoc --version
       verilator --version
       riscv32-unknown-elf-gcc --version
-      verilog_lint --version
+      verible-verilog-lint --version
     displayName: Display environment
 
-  # Verible lint/format is experimental so only run on default config for now,
+  # Verible format is experimental so only run on default config for now,
   # will eventually become part of the per-config CI
-  - bash: |
-      fusesoc --cores-root . run --no-export --target=lint --tool=veriblelint lowrisc:ibex:ibex_core_tracing
-      if [ $? != 0 ]; then
-        echo -n "##vso[task.logissue type=error]"
-        echo "Verilog lint with Verible failed. Run 'fusesoc --cores-root . run --target=lint --tool=veriblelint lowrisc:ibex:ibex_core_tracing' to check and fix all errors."
-        echo "This flow is currently experimental and failures can be ignored."
-        exit 1
-      fi
-    continueOnError: true
-    displayName: Lint Verilog source files with Verible (experimental)
-
   - bash: |
       fusesoc --cores-root . run --no-export --target=format --tool=veribleformat lowrisc:ibex:ibex_core_tracing
       if [ $? != 0 ]; then
@@ -163,13 +85,36 @@ jobs:
       cd build
       git clone https://github.com/riscv/riscv-compliance.git
       cd riscv-compliance
-      git checkout "$(RISCV_COMPLIANCE_GIT_VERSION)"
+      git checkout "$RISCV_COMPLIANCE_GIT_VERSION"
     displayName: Get RISC-V Compliance test suite
 
   # Run Ibex RTL CI per supported configuration
   - template : ci/ibex-rtl-ci-steps.yml
     parameters:
       ibex_configs:
-        - small-3cmult
-        - experimental-maxperf-1cmult
-        - experimental-maxperf-bm-1cmult
+        # Note: Try to keep the list of configurations in sync with the one used
+        # in Private CI.
+        - small
+        - experimental-maxperf-pmp
+        - experimental-maxperf-pmp-bmfull
+        - experimental-maxperf-pmp-bmfull-icache
+        - experimental-branch-predictor
+
+  # Run lint on simple system
+  - bash: |
+      fusesoc --cores-root . run --target=lint --tool=verilator lowrisc:ibex:ibex_simple_system
+      if [ $? != 0 ]; then
+        echo -n "##vso[task.logissue type=error]"
+        echo "Verilog lint with Verilator failed. Run 'fusesoc --cores-root . run --target=lint --tool=verilator lowrisc:ibex:ibex_simple_system' to check and fix all errors."
+        exit 1
+      fi
+    displayName: Run Verilator lint on simple system
+
+  - bash: |
+      fusesoc --cores-root . run --target=lint --tool=veriblelint lowrisc:ibex:ibex_simple_system
+      if [ $? != 0 ]; then
+        echo -n "##vso[task.logissue type=error]"
+        echo "Verilog lint with Verible failed. Run 'fusesoc --cores-root . run --target=lint --tool=veriblelint lowrisc:ibex:ibex_simple_system' to check and fix all errors."
+        exit 1
+      fi
+    displayName: Run Verible lint on simple system

@@ -33,15 +33,7 @@ class hmac_base_vseq extends cip_base_vseq #(.CFG_T               (hmac_env_cfg)
 
   virtual task dut_init(string reset_kind = "HARD");
     super.dut_init(reset_kind);
-    alert_send_ping();
     if (do_hmac_init) hmac_init();
-  endtask
-
-  virtual task alert_send_ping();
-    alert_receiver_seq ping_seq;
-    `uvm_create_on(ping_seq, p_sequencer.alert_esc_sequencer_h[cfg.list_of_alerts[0]]);
-    `DV_CHECK_RANDOMIZE_FATAL(ping_seq)
-    `uvm_send(ping_seq)
   endtask
 
   virtual task dut_shutdown();
@@ -93,14 +85,14 @@ class hmac_base_vseq extends cip_base_vseq #(.CFG_T               (hmac_env_cfg)
   virtual task write_discard_key();
     bit [TL_DW-1:0] rand_key_value = $urandom();
     randcase
-      1:  csr_wr(ral.key0, rand_key_value);
-      1:  csr_wr(ral.key1, rand_key_value);
-      1:  csr_wr(ral.key2, rand_key_value);
-      1:  csr_wr(ral.key3, rand_key_value);
-      1:  csr_wr(ral.key4, rand_key_value);
-      1:  csr_wr(ral.key5, rand_key_value);
-      1:  csr_wr(ral.key6, rand_key_value);
-      1:  csr_wr(ral.key7, rand_key_value);
+      1:  csr_wr(ral.key_0, rand_key_value);
+      1:  csr_wr(ral.key_1, rand_key_value);
+      1:  csr_wr(ral.key_2, rand_key_value);
+      1:  csr_wr(ral.key_3, rand_key_value);
+      1:  csr_wr(ral.key_4, rand_key_value);
+      1:  csr_wr(ral.key_5, rand_key_value);
+      1:  csr_wr(ral.key_6, rand_key_value);
+      1:  csr_wr(ral.key_7, rand_key_value);
     endcase
   endtask
 
@@ -128,35 +120,38 @@ class hmac_base_vseq extends cip_base_vseq #(.CFG_T               (hmac_env_cfg)
 
     // read digest value and output read value
   virtual task csr_rd_digest(output bit [TL_DW-1:0] digest[8]);
-    csr_rd(.ptr(ral.digest0), .value(digest[0]));
-    csr_rd(.ptr(ral.digest1), .value(digest[1]));
-    csr_rd(.ptr(ral.digest2), .value(digest[2]));
-    csr_rd(.ptr(ral.digest3), .value(digest[3]));
-    csr_rd(.ptr(ral.digest4), .value(digest[4]));
-    csr_rd(.ptr(ral.digest5), .value(digest[5]));
-    csr_rd(.ptr(ral.digest6), .value(digest[6]));
-    csr_rd(.ptr(ral.digest7), .value(digest[7]));
+    csr_rd(.ptr(ral.digest_0), .value(digest[0]));
+    csr_rd(.ptr(ral.digest_1), .value(digest[1]));
+    csr_rd(.ptr(ral.digest_2), .value(digest[2]));
+    csr_rd(.ptr(ral.digest_3), .value(digest[3]));
+    csr_rd(.ptr(ral.digest_4), .value(digest[4]));
+    csr_rd(.ptr(ral.digest_5), .value(digest[5]));
+    csr_rd(.ptr(ral.digest_6), .value(digest[6]));
+    csr_rd(.ptr(ral.digest_7), .value(digest[7]));
   endtask
 
   // write 256-bit hashed key
-  virtual task wr_key(bit [TL_DW-1:0] key[8]);
+  //
+  // can safely assume that the input array will always have 8 elements
+  // since HMAC key size is always 256 bits
+  virtual task wr_key(bit [TL_DW-1:0] key[]);
     // pity we cant loop here
-    ral.key0.set(key[0]);
-    ral.key1.set(key[1]);
-    ral.key2.set(key[2]);
-    ral.key3.set(key[3]);
-    ral.key4.set(key[4]);
-    ral.key5.set(key[5]);
-    ral.key6.set(key[6]);
-    ral.key7.set(key[7]);
-    csr_update(.csr(ral.key0));
-    csr_update(.csr(ral.key1));
-    csr_update(.csr(ral.key2));
-    csr_update(.csr(ral.key3));
-    csr_update(.csr(ral.key4));
-    csr_update(.csr(ral.key5));
-    csr_update(.csr(ral.key6));
-    csr_update(.csr(ral.key7));
+    ral.key_0.set(key[0]);
+    ral.key_1.set(key[1]);
+    ral.key_2.set(key[2]);
+    ral.key_3.set(key[3]);
+    ral.key_4.set(key[4]);
+    ral.key_5.set(key[5]);
+    ral.key_6.set(key[6]);
+    ral.key_7.set(key[7]);
+    csr_update(.csr(ral.key_0));
+    csr_update(.csr(ral.key_1));
+    csr_update(.csr(ral.key_2));
+    csr_update(.csr(ral.key_3));
+    csr_update(.csr(ral.key_4));
+    csr_update(.csr(ral.key_5));
+    csr_update(.csr(ral.key_6));
+    csr_update(.csr(ral.key_7));
     foreach (key[i]) begin
       `uvm_info(`gfn, $sformatf("key[%0d] = 0x%0h", i, key[i]), UVM_HIGH)
     end
@@ -179,8 +174,8 @@ class hmac_base_vseq extends cip_base_vseq #(.CFG_T               (hmac_env_cfg)
       word = {>>byte{word_unpack}};
       `uvm_info(`gfn, $sformatf("wr_addr = %0h, wr_mask = %0h, words = 0x%0h",
                                 wr_addr, wr_mask, word), UVM_HIGH)
-      tl_access(.addr(wr_addr), .write(1'b1), .data(word), .mask(wr_mask),
-                .blocking(non_blocking));
+      tl_access(.addr(cfg.ral.get_addr_from_offset(wr_addr)),
+                .write(1'b1), .data(word), .mask(wr_mask), .blocking(non_blocking));
 
       if (ral.cfg.sha_en.get_mirrored_value()) begin
         if (!do_back_pressure) begin
@@ -215,8 +210,8 @@ class hmac_base_vseq extends cip_base_vseq #(.CFG_T               (hmac_env_cfg)
           `uvm_info(`gfn, $sformatf("wr_addr = %0h, wr_mask = %0h, words = 0x%0h",
                                     wr_addr, wr_mask, word), UVM_HIGH)
           `DV_CHECK_FATAL(randomize(wr_addr, wr_mask) with {wr_mask == '1;})
-          tl_access(.addr(wr_addr), .write(1'b1), .data(word), .mask(wr_mask),
-                    .blocking($urandom_range(0, 1)));
+          tl_access(.addr(cfg.ral.get_addr_from_offset(wr_addr)),
+                    .write(1'b1), .data(word), .mask(wr_mask), .blocking($urandom_range(0, 1)));
         end
         if (ral.cfg.sha_en.get_mirrored_value()) begin
           //clear_intr_fifo_full();
@@ -270,12 +265,19 @@ class hmac_base_vseq extends cip_base_vseq #(.CFG_T               (hmac_env_cfg)
     csr_rd(ral.err_code, error_code);
   endtask
 
-  virtual task compare_digest(bit [TL_DW-1:0] exp_digest[8]);
+  virtual task compare_digest(bit [7:0] exp_digest[]);
     bit [TL_DW-1:0] act_digest[8];
+    bit [TL_DW-1:0] packed_exp_digest[8];
     csr_rd_digest(act_digest);
+    // `exp_digest` is guaranteed to always contain 32 bytes of data since
+    // HMAC digest size is always 256 bits.
+    packed_exp_digest = {>>byte{exp_digest}};
     if (cfg.clk_rst_vif.rst_n) begin
+      // can safely assume that `exp_digest` always has 8 elements
+      // since HMAC output size is 256 bits.
       foreach (act_digest[i]) begin
-        `DV_CHECK_EQ(act_digest[i], exp_digest[i], $sformatf("for index %0d", i))
+        `DV_CHECK_EQ(act_digest[i], packed_exp_digest[i],
+                     $sformatf("for index %0d", i))
       end
     end else begin
       `uvm_info(`gfn, "skipped comparison due to reset", UVM_LOW)

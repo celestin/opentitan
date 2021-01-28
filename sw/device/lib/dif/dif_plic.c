@@ -8,25 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "rv_plic_regs.h"  // Generated.
+#include "sw/device/lib/base/bitfield.h"
 #include "sw/device/lib/base/mmio.h"
 
-// If either of these static assertions fail, then the assumptions in this DIF
-// implementation should be revisited. In particular, `plic_target_reg_offsets`
-// may need updating,
-_Static_assert(RV_PLIC_PARAM_NUMSRC == 81,
-               "PLIC instantiation parameters have changed.");
-_Static_assert(RV_PLIC_PARAM_NUMTARGET == 1,
-               "PLIC instantiation parameters have changed.");
+#include "rv_plic_regs.h"  // Generated.
 
-// The highest interrupt priority.
-#define RV_PLIC_MAX_PRIORITY 0x3u
-
-// These defines are used to calculate the IRQ index in IP, LE, IE registers.
-// These registers are 32bit wide, and in order to accommodate all the IRQs,
-// multiple of the same type registers are defined (IE00, IE01, ...). For
-// example, IRQ ID 32 corresponds to bit 0 in registers IP1, LE1, IE01.
-#define PLIC_ID_TO_INDEX_REG_SIZE 32u
+const uint32_t kDifPlicMinPriority = 0;
+const uint32_t kDifPlicMaxPriority = RV_PLIC_PRIO0_PRIO0_MASK;
 
 /**
  * PLIC register info.
@@ -35,72 +23,19 @@ _Static_assert(RV_PLIC_PARAM_NUMTARGET == 1,
  * and the offset of this register inside the PLIC.
  */
 typedef struct plic_reg_info {
-  ptrdiff_t offset;  /*<< Register offset. */
-  uint8_t bit_index; /*<< Bit index within the register. */
+  ptrdiff_t offset;
+  bitfield_bit32_index_t bit_index;
 } plic_reg_info_t;
 
 /**
- * PLIC target specific register offsets.
- *
- * PLIC is designed to support multiple targets, and every target has a set
- * of its own registers. This data type is used to store PLIC target specific
- * register offsets.
- */
-typedef struct plic_target_reg_offset {
-  ptrdiff_t ie;        /*<< Interrupt Enable register offset. */
-  ptrdiff_t cc;        /*<< Claim/complete register offset. */
-  ptrdiff_t threshold; /*<< Threshold register offset. */
-} plic_target_reg_offset_t;
-
-// This array gives a way of getting the target-specific register offsets from
-// a `dif_plic_target_t`.
-//
-// There should be an instance of `plic_target_reg_offset_t` for each possible
-// target, so there should be `RV_PLIC_PARAM_NUMTARGET` entries in this array.
-// The `i`th entry should contain the offsets of the `i`th target specific
-// registers:
-// - `RV_PLIC_IE<i>0_REG_OFFSET` (the first IE reg for target `i`).
-// - `RV_PLIC_CC<i>_REG_OFFSET`
-// - `RV_PLIC_THRESHOLD<i>_REG_OFFSET`
-static const plic_target_reg_offset_t plic_target_reg_offsets[] = {
-        [0] =
-            {
-                .ie = RV_PLIC_IE00_REG_OFFSET,
-                .cc = RV_PLIC_CC0_REG_OFFSET,
-                .threshold = RV_PLIC_THRESHOLD0_REG_OFFSET,
-            },
-};
-_Static_assert(
-    sizeof(plic_target_reg_offsets) / sizeof(*plic_target_reg_offsets) ==
-        RV_PLIC_PARAM_NUMTARGET,
-    "There should be an entry in plic_target_reg_offsets for every target");
-
-/**
- * Get a number of IE, IP or LE registers (IE00, IE01, ...).
- *
- * With more than 32 IRQ sources, there is a multiple of these registers to
- * accommodate all the bits (1 bit per IRQ source).
- */
-static size_t plic_num_irq_reg(void) {
-  size_t register_num = RV_PLIC_PARAM_NUMSRC / PLIC_ID_TO_INDEX_REG_SIZE;
-
-  // Determine whether there are remaining IRQ sources that have a register.
-  if ((RV_PLIC_PARAM_NUMSRC % PLIC_ID_TO_INDEX_REG_SIZE) != 0) {
-    ++register_num;
-  }
-
-  return register_num;
-}
-
-/**
- * Get an IE, IP or LE register offset (IE00, IE01, ...) from an IRQ source ID.
+ * Get an IE, IP or LE register offset (IE0_0, IE01, ...) from an IRQ source ID.
  *
  * With more than 32 IRQ sources, there is a multiple of these registers to
  * accommodate all the bits (1 bit per IRQ source). This function calculates
  * the offset for a specific IRQ source ID (ID 32 would be IE01, ...).
  */
 static ptrdiff_t plic_offset_from_reg0(dif_plic_irq_id_t irq) {
-  uint8_t register_index = irq / PLIC_ID_TO_INDEX_REG_SIZE;
+  uint8_t register_index = irq / RV_PLIC_PARAM_REG_WIDTH;
   return register_index * sizeof(uint32_t);
 }
 
@@ -109,42 +44,74 @@ static ptrdiff_t plic_offset_from_reg0(dif_plic_irq_id_t irq) {
  *
  * With more than 32 IRQ sources, there is a multiple of these registers to
  * accommodate all the bits (1 bit per IRQ source). This function calculates
- * the bit position within a register for a specifci IRQ source ID (ID 32 would
+ * the bit position within a register for a specific IRQ source ID (ID 32 would
  * be bit 0).
  */
-static uint8_t plic_reg_bit_index_from_irq_id(dif_plic_irq_id_t irq) {
-  return irq % PLIC_ID_TO_INDEX_REG_SIZE;
+static uint8_t plic_irq_bit_index(dif_plic_irq_id_t irq) {
+  return irq % RV_PLIC_PARAM_REG_WIDTH;
+}
+
+/**
+ * Get the address of the first target N interrupt enable register (IEN0).
+ */
+static ptrdiff_t plic_irq_enable_base_for_target(dif_plic_target_t target) {
+  ptrdiff_t range = RV_PLIC_IE0_MULTIREG_COUNT * sizeof(uint32_t);
+  return RV_PLIC_IE0_0_REG_OFFSET + (range * target);
+}
+
+/**
+ * Get the address of the first target N software interrupt register (MSIPN).
+ */
+static ptrdiff_t plic_software_irq_base_for_target(dif_plic_target_t target) {
+  return RV_PLIC_MSIP0_REG_OFFSET + (target * sizeof(uint32_t));
+}
+
+/**
+ * Get the address of the first target N threshold register (THRESHOLDN).
+ */
+static ptrdiff_t plic_threshold_base_for_target(dif_plic_target_t target) {
+  return RV_PLIC_THRESHOLD0_REG_OFFSET + (target * sizeof(uint32_t));
+}
+
+/**
+ * Get the address of the first target N claim complete register (CCN).
+ */
+static ptrdiff_t plic_claim_complete_base_for_target(dif_plic_target_t target) {
+  return RV_PLIC_CC0_REG_OFFSET + (target * sizeof(uint32_t));
 }
 
 /**
  * Get a target and an IRQ source specific Interrupt Enable register info.
  */
-static void plic_irq_enable_reg_info(dif_plic_irq_id_t irq,
-                                     dif_plic_target_t target,
-                                     plic_reg_info_t *reg_info) {
+static plic_reg_info_t plic_irq_enable_reg_info(dif_plic_irq_id_t irq,
+                                                dif_plic_target_t target) {
   ptrdiff_t offset = plic_offset_from_reg0(irq);
-  reg_info->offset = plic_target_reg_offsets[target].ie + offset;
-  reg_info->bit_index = plic_reg_bit_index_from_irq_id(irq);
+  return (plic_reg_info_t){
+      .offset = plic_irq_enable_base_for_target(target) + offset,
+      .bit_index = plic_irq_bit_index(irq),
+  };
 }
 
 /**
  * Get an IRQ source specific Level/Edge register info.
  */
-static void plic_irq_trigger_type_reg_info(dif_plic_irq_id_t irq,
-                                           plic_reg_info_t *reg_info) {
+static plic_reg_info_t plic_irq_trigger_type_reg_info(dif_plic_irq_id_t irq) {
   ptrdiff_t offset = plic_offset_from_reg0(irq);
-  reg_info->offset = RV_PLIC_LE0_REG_OFFSET + offset;
-  reg_info->bit_index = plic_reg_bit_index_from_irq_id(irq);
+  return (plic_reg_info_t){
+      .offset = RV_PLIC_LE_0_REG_OFFSET + offset,
+      .bit_index = plic_irq_bit_index(irq),
+  };
 }
 
 /**
  * Get an IRQ source specific Interrupt Pending register info.
  */
-static void plic_irq_pending_reg_info(dif_plic_irq_id_t irq,
-                                      plic_reg_info_t *reg_info) {
+static plic_reg_info_t plic_irq_pending_reg_info(dif_plic_irq_id_t irq) {
   ptrdiff_t offset = plic_offset_from_reg0(irq);
-  reg_info->offset = RV_PLIC_IP0_REG_OFFSET + offset;
-  reg_info->bit_index = plic_reg_bit_index_from_irq_id(irq);
+  return (plic_reg_info_t){
+      .offset = RV_PLIC_IP_0_REG_OFFSET + offset,
+      .bit_index = plic_irq_bit_index(irq),
+  };
 }
 
 /**
@@ -167,162 +134,235 @@ static ptrdiff_t plic_priority_reg_offset(dif_plic_irq_id_t irq) {
  * resource has cleared/completed the CC access.
  */
 static void plic_reset(const dif_plic_t *plic) {
-  // Clear all of Interrupt Enable and Level/Edge registers.
-  for (int i = 0; i < plic_num_irq_reg(); ++i) {
-    ptrdiff_t offset = RV_PLIC_IE00_REG_OFFSET + (i * sizeof(uint32_t));
-    mmio_region_write32(plic->base_addr, offset, 0);
-
-    offset = RV_PLIC_LE0_REG_OFFSET + (i * sizeof(uint32_t));
-    mmio_region_write32(plic->base_addr, offset, 0);
+  // Clear all of the Level/Edge registers.
+  for (int i = 0; i < RV_PLIC_LE_MULTIREG_COUNT; ++i) {
+    ptrdiff_t offset = RV_PLIC_LE_0_REG_OFFSET + (i * sizeof(uint32_t));
+    mmio_region_write32(plic->params.base_addr, offset, 0);
   }
 
   // Clear all of the priority registers.
   for (int i = 0; i < RV_PLIC_PARAM_NUMSRC; ++i) {
-    ptrdiff_t offset = RV_PLIC_PRIO0_REG_OFFSET + (i * sizeof(uint32_t));
-    mmio_region_write32(plic->base_addr, offset, 0);
+    ptrdiff_t offset = plic_priority_reg_offset(i);
+    mmio_region_write32(plic->params.base_addr, offset, 0);
   }
 
-  // Clear all of the target threshold registers.
+  // Clear all of the target related registers.
   for (dif_plic_target_t target = 0; target < RV_PLIC_PARAM_NUMTARGET;
        ++target) {
-    ptrdiff_t offset = plic_target_reg_offsets[target].threshold;
-    mmio_region_write32(plic->base_addr, offset, 0);
-  }
+    // Clear interrupt enable registers.
+    ptrdiff_t offset = plic_irq_enable_base_for_target(target);
+    for (int i = 0; i < RV_PLIC_IE0_MULTIREG_COUNT; ++i) {
+      ptrdiff_t multireg_offset = offset + (i * sizeof(uint32_t));
+      mmio_region_write32(plic->params.base_addr, multireg_offset, 0);
+    }
 
-  // Clear software interrupt pending register.
-  mmio_region_write32(plic->base_addr, RV_PLIC_MSIP0_REG_OFFSET, 0);
+    // Clear threshold registers.
+    offset = plic_threshold_base_for_target(target);
+    mmio_region_write32(plic->params.base_addr, offset, 0);
+
+    // Clear software interrupt registers.
+    offset = plic_software_irq_base_for_target(target);
+    mmio_region_write32(plic->params.base_addr, offset, 0);
+  }
 }
 
-bool dif_plic_init(mmio_region_t base_addr, dif_plic_t *plic) {
+dif_plic_result_t dif_plic_init(dif_plic_params_t params, dif_plic_t *plic) {
   if (plic == NULL) {
-    return false;
+    return kDifPlicBadArg;
   }
 
-  plic->base_addr = base_addr;
+  plic->params = params;
 
+  // TODO: Move this out into its own function.
   plic_reset(plic);
 
-  return true;
+  return kDifPlicOk;
 }
 
-bool dif_plic_irq_enable_set(const dif_plic_t *plic, dif_plic_irq_id_t irq,
-                             dif_plic_target_t target,
-                             dif_plic_enable_t enable) {
+dif_plic_result_t dif_plic_irq_get_enabled(const dif_plic_t *plic,
+                                           dif_plic_irq_id_t irq,
+                                           dif_plic_target_t target,
+                                           dif_plic_toggle_t *state) {
   if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC ||
       target >= RV_PLIC_PARAM_NUMTARGET) {
-    return false;
+    return kDifPlicBadArg;
   }
 
-  // Get a target and an IRQ source specific Interrupt Enable register info.
-  plic_reg_info_t reg_info;
-  plic_irq_enable_reg_info(irq, target, &reg_info);
+  plic_reg_info_t reg_info = plic_irq_enable_reg_info(irq, target);
 
-  if (enable == kDifPlicEnable) {
-    mmio_region_nonatomic_set_bit32(plic->base_addr, reg_info.offset,
-                                    reg_info.bit_index);
-  } else {
-    mmio_region_nonatomic_clear_bit32(plic->base_addr, reg_info.offset,
-                                      reg_info.bit_index);
-  }
+  uint32_t reg = mmio_region_read32(plic->params.base_addr, reg_info.offset);
+  bool is_enabled = bitfield_bit32_read(reg, reg_info.bit_index);
+  *state = is_enabled ? kDifPlicToggleEnabled : kDifPlicToggleDisabled;
 
-  return true;
+  return kDifPlicOk;
 }
 
-bool dif_plic_irq_trigger_type_set(const dif_plic_t *plic,
-                                   dif_plic_irq_id_t irq,
-                                   dif_plic_enable_t enable) {
-  if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC) {
-    return false;
-  }
-
-  // Get an IRQ source specific Level/Edge register info.
-  plic_reg_info_t reg_info;
-  plic_irq_trigger_type_reg_info(irq, &reg_info);
-
-  if (enable == kDifPlicEnable) {
-    mmio_region_nonatomic_set_bit32(plic->base_addr, reg_info.offset,
-                                    reg_info.bit_index);
-  } else {
-    mmio_region_nonatomic_clear_bit32(plic->base_addr, reg_info.offset,
-                                      reg_info.bit_index);
-  }
-
-  return true;
-}
-
-bool dif_plic_irq_priority_set(const dif_plic_t *plic, dif_plic_irq_id_t irq,
-                               uint32_t priority) {
+dif_plic_result_t dif_plic_irq_set_enabled(const dif_plic_t *plic,
+                                           dif_plic_irq_id_t irq,
+                                           dif_plic_target_t target,
+                                           dif_plic_toggle_t state) {
   if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC ||
-      priority > RV_PLIC_MAX_PRIORITY) {
-    return false;
+      target >= RV_PLIC_PARAM_NUMTARGET) {
+    return kDifPlicBadArg;
+  }
+
+  bool flag;
+  switch (state) {
+    case kDifPlicToggleEnabled:
+      flag = true;
+      break;
+    case kDifPlicToggleDisabled:
+      flag = false;
+      break;
+    default:
+      return kDifPlicBadArg;
+  }
+
+  plic_reg_info_t reg_info = plic_irq_enable_reg_info(irq, target);
+
+  uint32_t reg = mmio_region_read32(plic->params.base_addr, reg_info.offset);
+  reg = bitfield_bit32_write(reg, reg_info.bit_index, flag);
+  mmio_region_write32(plic->params.base_addr, reg_info.offset, reg);
+
+  return kDifPlicOk;
+}
+
+dif_plic_result_t dif_plic_irq_set_trigger(const dif_plic_t *plic,
+                                           dif_plic_irq_id_t irq,
+                                           dif_plic_irq_trigger_t trigger) {
+  if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC) {
+    return kDifPlicBadArg;
+  }
+
+  bool flag;
+  switch (trigger) {
+    case kDifPlicIrqTriggerEdge:
+      flag = true;
+      break;
+    case kDifPlicIrqTriggerLevel:
+      flag = false;
+      break;
+    default:
+      return kDifPlicBadArg;
+  }
+
+  plic_reg_info_t reg_info = plic_irq_trigger_type_reg_info(irq);
+
+  uint32_t reg = mmio_region_read32(plic->params.base_addr, reg_info.offset);
+  reg = bitfield_bit32_write(reg, reg_info.bit_index, flag);
+  mmio_region_write32(plic->params.base_addr, reg_info.offset, reg);
+
+  return kDifPlicOk;
+}
+
+dif_plic_result_t dif_plic_irq_set_priority(const dif_plic_t *plic,
+                                            dif_plic_irq_id_t irq,
+                                            uint32_t priority) {
+  if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC ||
+      priority > kDifPlicMaxPriority) {
+    return kDifPlicBadArg;
   }
 
   ptrdiff_t offset = plic_priority_reg_offset(irq);
-  mmio_region_write32(plic->base_addr, offset, priority);
+  mmio_region_write32(plic->params.base_addr, offset, priority);
 
-  return true;
+  return kDifPlicOk;
 }
 
-bool dif_plic_target_threshold_set(const dif_plic_t *plic,
-                                   dif_plic_target_t target,
-                                   uint32_t threshold) {
+dif_plic_result_t dif_plic_target_set_threshold(const dif_plic_t *plic,
+                                                dif_plic_target_t target,
+                                                uint32_t threshold) {
   if (plic == NULL || target >= RV_PLIC_PARAM_NUMTARGET ||
-      threshold > RV_PLIC_MAX_PRIORITY) {
-    return false;
+      threshold > kDifPlicMaxPriority) {
+    return kDifPlicBadArg;
   }
 
-  ptrdiff_t threshold_offset = plic_target_reg_offsets[target].threshold;
-  mmio_region_write32(plic->base_addr, threshold_offset, threshold);
+  ptrdiff_t threshold_offset = plic_threshold_base_for_target(target);
+  mmio_region_write32(plic->params.base_addr, threshold_offset, threshold);
 
-  return true;
+  return kDifPlicOk;
 }
 
-bool dif_plic_irq_pending_status_get(const dif_plic_t *plic,
-                                     dif_plic_irq_id_t irq,
-                                     dif_plic_flag_t *status) {
-  if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC || status == NULL) {
-    return false;
+dif_plic_result_t dif_plic_irq_is_pending(const dif_plic_t *plic,
+                                          dif_plic_irq_id_t irq,
+                                          bool *is_pending) {
+  if (plic == NULL || irq >= RV_PLIC_PARAM_NUMSRC || is_pending == NULL) {
+    return kDifPlicBadArg;
   }
 
-  plic_reg_info_t reg_info;
-  plic_irq_pending_reg_info(irq, &reg_info);
+  plic_reg_info_t reg_info = plic_irq_pending_reg_info(irq);
+  uint32_t reg = mmio_region_read32(plic->params.base_addr, reg_info.offset);
+  *is_pending = bitfield_bit32_read(reg, reg_info.bit_index);
 
-  if (mmio_region_get_bit32(plic->base_addr, reg_info.offset,
-                            reg_info.bit_index)) {
-    *status = kDifPlicSet;
-  } else {
-    *status = kDifPlicUnset;
-  }
-
-  return true;
+  return kDifPlicOk;
 }
 
-bool dif_plic_irq_claim(const dif_plic_t *plic, dif_plic_target_t target,
-                        dif_plic_irq_id_t *claim_data) {
+dif_plic_result_t dif_plic_irq_claim(const dif_plic_t *plic,
+                                     dif_plic_target_t target,
+                                     dif_plic_irq_id_t *claim_data) {
   if (plic == NULL || target >= RV_PLIC_PARAM_NUMTARGET || claim_data == NULL) {
-    return false;
+    return kDifPlicBadArg;
   }
 
-  // Get an IRQ ID from the target specific CC register.
-  ptrdiff_t cc_offset = plic_target_reg_offsets[target].cc;
-  uint32_t irq_id = mmio_region_read32(plic->base_addr, cc_offset);
+  ptrdiff_t claim_complete_reg = plic_claim_complete_base_for_target(target);
+  *claim_data = mmio_region_read32(plic->params.base_addr, claim_complete_reg);
 
-  // Return the IRQ ID directly.
-  *claim_data = irq_id;
-  return true;
+  return kDifPlicOk;
 }
 
-bool dif_plic_irq_complete(const dif_plic_t *plic, dif_plic_target_t target,
-                           const dif_plic_irq_id_t *complete_data) {
+dif_plic_result_t dif_plic_irq_complete(
+    const dif_plic_t *plic, dif_plic_target_t target,
+    const dif_plic_irq_id_t *complete_data) {
   if (plic == NULL || target >= RV_PLIC_PARAM_NUMTARGET ||
       complete_data == NULL) {
-    return false;
+    return kDifPlicBadArg;
   }
 
   // Write back the claimed IRQ ID to the target specific CC register,
   // to notify the PLIC of the IRQ completion.
-  ptrdiff_t cc_offset = plic_target_reg_offsets[target].cc;
-  mmio_region_write32(plic->base_addr, cc_offset, (uint32_t)*complete_data);
+  ptrdiff_t claim_complete_reg = plic_claim_complete_base_for_target(target);
+  mmio_region_write32(plic->params.base_addr, claim_complete_reg,
+                      *complete_data);
 
-  return true;
+  return kDifPlicOk;
+}
+
+dif_plic_result_t dif_plic_software_irq_force(const dif_plic_t *plic,
+                                              dif_plic_target_t target) {
+  if (plic == NULL || target >= RV_PLIC_PARAM_NUMTARGET) {
+    return kDifPlicBadArg;
+  }
+
+  ptrdiff_t msip_offset = plic_software_irq_base_for_target(target);
+  mmio_region_write32(plic->params.base_addr, msip_offset, 1);
+
+  return kDifPlicOk;
+}
+
+dif_plic_result_t dif_plic_software_irq_acknowledge(const dif_plic_t *plic,
+                                                    dif_plic_target_t target) {
+  if (plic == NULL || target >= RV_PLIC_PARAM_NUMTARGET) {
+    return kDifPlicBadArg;
+  }
+
+  ptrdiff_t msip_offset = plic_software_irq_base_for_target(target);
+  mmio_region_write32(plic->params.base_addr, msip_offset, 0);
+
+  return kDifPlicOk;
+}
+
+dif_plic_result_t dif_plic_software_irq_is_pending(const dif_plic_t *plic,
+                                                   dif_plic_target_t target,
+                                                   bool *is_pending) {
+  if (plic == NULL || target >= RV_PLIC_PARAM_NUMTARGET || is_pending == NULL) {
+    return kDifPlicBadArg;
+  }
+
+  ptrdiff_t msip_offset = plic_software_irq_base_for_target(target);
+  uint32_t register_value =
+      mmio_region_read32(plic->params.base_addr, msip_offset);
+
+  *is_pending = (register_value == 1) ? true : false;
+
+  return kDifPlicOk;
 }

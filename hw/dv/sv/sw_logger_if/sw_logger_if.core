@@ -7,6 +7,9 @@ description: "SW msg monitor interface (convert SW msg prints into SV)"
 
 filesets:
   files_dv:
+    depend:
+      - lowrisc:dv:dv_macros
+      - lowrisc:dv:str_utils
     files:
       - sw_logger_if.sv
     file_type: systemVerilogSource

@@ -13,7 +13,6 @@
 
   h1 {
     padding-top: 0.5em;
-    border-top: 1px solid;
     font-family: 'Livvic', sans-serif;
     font-size: 2.5em;
     line-height: 1.28;
@@ -25,7 +24,7 @@
       padding-top: 0;
     }
   }
-  
+
   h1.title {
     font-size: 2.5em;
     border: none !important;
@@ -76,8 +75,6 @@
     border-collapse: collapse;
 
     td, th {
-      color: $medium-purple;
-      color: var(--text-second);
       vertical-align: top;
       border: 1px solid var(--text-second);
       padding: 0.5em;
@@ -85,14 +82,11 @@
 
     th {
       font-weight: bold;
-      color: $dark-purple;
-      color: var(--text-color);
     }
   }
 
   pre {
     width: 100%;
-    max-width: 80ch;
     overflow-x: auto;
     display: block;
     white-space: pre-wrap;
@@ -100,8 +94,6 @@
   }
 
   ul, ol {
-    color: $medium-purple;
-    color: var(--text-second);
     padding-left: 1em;
 
     > li + li {
@@ -110,7 +102,6 @@
 
     ul,
     ol {
-      font-size: 0.875em;
       margin-top: 0.5em;
     }
   }
@@ -136,10 +127,43 @@ table.regdef {
 
 // Dashboard design
 table.hw-project-dashboard {
+    thead th {
+        vertical-align: middle;
+    }
+
     td {
         vertical-align: middle;
-        &.hw-stage {
+
+        &.dv-plan, &.version {
             text-align: center;
         }
+
+        &.hw-stage {
+            text-align: center;
+            border-style: solid none;
+        }
     }
+}
+
+/* Callouts */
+.bd-callout {
+  padding: 1.25rem;
+  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid #eee;
+  border-left-color: rgb(238, 238, 238);
+  border-left-width: 1px;
+  border-left-width: .25rem;
+  border-radius: .25rem;
+}
+
+.bd-callout h5 {
+  font-size: 1.25em;
+  margin:0;
+}
+.bd-callout-warning {
+  border-left-color: #f0ad4e;
+}
+.bd-callout p:last-child {
+  margin-bottom: 0;
 }

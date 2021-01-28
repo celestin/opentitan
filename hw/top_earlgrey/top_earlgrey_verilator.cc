@@ -17,18 +17,19 @@ int main(int argc, char **argv) {
 
   memutil.RegisterMemoryArea(
       "rom",
-      "TOP.top_earlgrey_verilator.top_earlgrey.u_rom_rom.gen_generic."
-      "u_impl_generic");
+      "TOP.top_earlgrey_verilator.top_earlgrey.u_rom_rom.u_prim_rom."
+      "gen_generic.u_impl_generic");
   memutil.RegisterMemoryArea(
       "ram",
       "TOP.top_earlgrey_verilator.top_earlgrey.u_ram1p_ram_main."
-      "gen_generic.u_impl_generic");
+      "u_prim_ram_1p_adv.u_mem.gen_generic.u_impl_generic");
   memutil.RegisterMemoryArea(
       "flash",
-      "TOP.top_earlgrey_verilator.top_earlgrey.u_flash_eflash."
-      "gen_flash_banks[0].i_core.i_flash.gen_generic.u_impl_generic.u_mem.gen_"
-      "generic."
-      "u_impl_generic");
+      ("TOP.top_earlgrey_verilator.top_earlgrey.u_flash_eflash.u_flash."
+       "gen_generic.u_impl_generic.gen_prim_flash_banks[0].u_prim_flash_bank.u_"
+       "mem.gen_"
+       "generic.u_impl_generic"),
+      64, nullptr);
   simctrl.RegisterExtension(&memutil);
   simctrl.SetInitialResetDelay(100);
 
@@ -36,5 +37,5 @@ int main(int argc, char **argv) {
             << "=================================" << std::endl
             << std::endl;
 
-  return simctrl.Exec(argc, argv);
+  return simctrl.Exec(argc, argv).first;
 }

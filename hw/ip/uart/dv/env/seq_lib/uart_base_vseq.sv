@@ -27,8 +27,8 @@ class uart_base_vseq extends cip_base_vseq #(.CFG_T               (uart_env_cfg)
 
   constraint baud_rate_c {
     // constrain nco not over nco.get_n_bits
-    `CALC_NCO(baud_rate, p_sequencer.cfg.clk_freq_mhz) <
-        2 ** p_sequencer.cfg.ral.ctrl.nco.get_n_bits();
+    `CALC_NCO(baud_rate, p_sequencer.cfg.ral.ctrl.nco.get_n_bits(),
+        p_sequencer.cfg.clk_freq_mhz) < 2 ** p_sequencer.cfg.ral.ctrl.nco.get_n_bits();
   }
 
   constraint dly_to_access_fifo_c {
@@ -115,13 +115,15 @@ class uart_base_vseq extends cip_base_vseq #(.CFG_T               (uart_env_cfg)
   virtual task spinwait_txidle();
     if (ral.ctrl.tx.get_mirrored_value()) begin
       // use a very big timeout as it takes long time to flush all the items
-      csr_spinwait(.ptr(ral.status.txidle), .exp_data(1'b1), .timeout_ns(40_000_000));
+      csr_spinwait(.ptr(ral.status.txidle), .exp_data(1'b1), .timeout_ns(40_000_000),
+                   .spinwait_delay_ns($urandom_range(0, 1000)));
     end
   endtask
 
   virtual task spinwait_rxidle();
     if (ral.ctrl.rx.get_mirrored_value()) begin
-      csr_spinwait(.ptr(ral.status.rxidle), .exp_data(1'b1));
+      csr_spinwait(.ptr(ral.status.rxidle), .exp_data(1'b1),
+                   .spinwait_delay_ns($urandom_range(0, 1000)));
     end
   endtask
 
@@ -159,36 +161,36 @@ class uart_base_vseq extends cip_base_vseq #(.CFG_T               (uart_env_cfg)
 
   // task to read all the rx bytes
   virtual task read_all_rx_bytes();
-    bit [TL_DW-1:0] rdata;
+    bit [TL_DW-1:0] rdata, fifo_status;
 
-    csr_rd(.ptr(ral.fifo_status), .value(rdata));
-    repeat (get_field_val(ral.fifo_status.rxlvl, rdata))  begin
-      csr_rd(.ptr(ral.rdata), .value(rdata));
+    csr_rd(.ptr(ral.fifo_status), .value(fifo_status));
+    repeat (get_field_val(ral.fifo_status.rxlvl, fifo_status))  begin
+      wait_ignored_period_and_read_rdata(rdata);
     end
 
-    csr_rd(.ptr(ral.fifo_status), .value(rdata));
+    csr_rd(.ptr(ral.fifo_status), .value(fifo_status));
 
     `uvm_info(`gfn, "read_all_rx_bytes is done", UVM_HIGH)
   endtask : read_all_rx_bytes
 
   // override this function to control RX fifo level
   virtual task rand_read_rx_byte(uint weight_to_skip);
-    bit [TL_DW-1:0] rdata;
+    bit [TL_DW-1:0] rdata, fifo_status;
     int             rxlvl;
 
     randcase
       1: begin // read & check one byte
-        csr_rd(.ptr(ral.fifo_status), .value(rdata));
-        rxlvl = get_field_val(ral.fifo_status.rxlvl, rdata);
+        csr_rd(.ptr(ral.fifo_status), .value(fifo_status));
+        rxlvl = get_field_val(ral.fifo_status.rxlvl, fifo_status);
         if(rxlvl > 0) begin
-          csr_rd(.ptr(ral.rdata), .value(rdata));
+          wait_ignored_period_and_read_rdata(rdata);
         end
       end
       1: begin // read & check some bytes
-        csr_rd(.ptr(ral.fifo_status), .value(rdata));
-        rxlvl = get_field_val(ral.fifo_status.rxlvl, rdata);
+        csr_rd(.ptr(ral.fifo_status), .value(fifo_status));
+        rxlvl = get_field_val(ral.fifo_status.rxlvl, fifo_status);
         if(rxlvl > 0) begin
-          repeat ($urandom_range(1, rxlvl)) csr_rd(.ptr(ral.rdata), .value(rdata));
+          repeat ($urandom_range(1, rxlvl)) wait_ignored_period_and_read_rdata(rdata);
         end
       end
       1: begin // read & check all rx bytes
@@ -199,12 +201,19 @@ class uart_base_vseq extends cip_base_vseq #(.CFG_T               (uart_env_cfg)
     endcase
   endtask : rand_read_rx_byte
 
+  // read rx data from CSR rdata, but wait until it's not in igored period
+  virtual task wait_ignored_period_and_read_rdata(ref bit [TL_DW-1:0] rdata);
+    wait_when_in_ignored_period(.rx(1));
+    csr_rd(.ptr(ral.rdata), .value(rdata));
+  endtask
+
   // task to wait for all rx bytes to be sent
   virtual task wait_for_all_tx_bytes();
     bit [TL_DW-1:0] fifo_status, status;
 
     if (ral.ctrl.tx.get_mirrored_value()) begin
       do begin
+        if (cfg.under_reset) break;
         `DV_CHECK_MEMBER_RANDOMIZE_FATAL(dly_to_access_fifo)
         cfg.clk_rst_vif.wait_clks(dly_to_access_fifo);
         csr_rd(.ptr(ral.fifo_status), .value(fifo_status));

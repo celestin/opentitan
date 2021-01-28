@@ -6,11 +6,11 @@
 
 import logging as log
 
-from mako.template import Template
 from mako import exceptions
+from mako.template import Template
 from pkg_resources import resource_filename
 
-from .data import Field, Reg, MultiReg, Window, Block
+from .data import Block, Field, MultiReg, Reg, Window
 from .field_enums import HwAccess, SwRdAccess, SwWrAccess
 
 
@@ -46,6 +46,7 @@ def parse_field(obj, reg, nfields):
     f.hwre = obj["genhwre"]
     f.hwext = reg.hwext
     f.tags = obj["tags"]
+    f.shadowed = reg.shadowed
 
     # resval handling. `genresval` has zero value if `resval` field is defined
     # as unknown 'x'
@@ -89,6 +90,10 @@ def parse_reg(obj):
         reg.regwen = obj["regwen"].lower()
         reg.ishomog = len(obj['fields']) == 1
         reg.tags = (obj['tags'])
+        reg.shadowed = (obj["shadowed"] == "true")
+        # For DV only: TODO: any good way we can move it to gen_dv?
+        reg.update_err_alert = (obj["update_err_alert"] if "update_err_alert" in obj else "")
+        reg.storage_err_alert = (obj["storage_err_alert"] if "storage_err_alert" in obj else "")
 
         # Parsing Fields
         for f in obj["fields"]:
@@ -112,6 +117,7 @@ def parse_win(obj, width):
     win = Window()
     win.name = obj["name"]
     win.base_addr = obj["genoffset"]
+    win.byte_write = obj["genbyte-write"]
     win.limit_addr = obj["genoffset"] + int(obj["items"]) * (width // 8)
     win.dvrights = obj["swaccess"]
     win.n_bits = obj["genvalidbits"]
@@ -144,6 +150,8 @@ def json_to_reg(obj):
     log.info("Data Width is set to %d bits", block.width)
 
     block.params = obj["param_list"] if "param_list" in obj else []
+
+    block.hier_path = obj["hier_path"] if "hier_path" in obj else ""
 
     for r in obj["registers"]:
         # Check if any exception condition hit

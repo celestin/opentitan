@@ -12,6 +12,8 @@ class xbar_base_vseq extends dv_base_vseq #(.CFG_T               (xbar_env_cfg),
   // TL host and device sub-sequences
   rand xbar_tl_host_seq  host_seq[];
   rand tl_device_seq     device_seq[];
+  rand bit               en_req_abort;
+  rand bit               en_rsp_abort;
 
   uint                   min_req_cnt = 100;
   uint                   max_req_cnt = 200;
@@ -25,16 +27,24 @@ class xbar_base_vseq extends dv_base_vseq #(.CFG_T               (xbar_env_cfg),
     }
   }
 
+  constraint en_req_abort_c {
+    en_req_abort dist {
+      1 :/ 25,
+      0 :/ 75
+    };
+  }
+
+  constraint en_rsp_abort_c {
+    en_rsp_abort dist {
+      1 :/ 25,
+      0 :/ 75
+    };
+  }
   `uvm_object_utils(xbar_base_vseq)
   `uvm_object_new
 
-  // call seq_init to create and configure host/device seq
-  // seq_init needs to be called before randomize as host_seq/device_seq are rand
+  // create and configure host/device seq before randomize as host_seq/device_seq are rand
   function void pre_randomize();
-    seq_init();
-  endfunction : pre_randomize
-
-  virtual function void seq_init();
     host_seq = new[xbar_hosts.size()];
     device_seq = new[xbar_devices.size()];
     foreach (host_seq[i]) begin
@@ -52,8 +62,18 @@ class xbar_base_vseq extends dv_base_vseq #(.CFG_T               (xbar_env_cfg),
     foreach (device_seq[i]) begin
       device_seq[i] = tl_device_seq::type_id::create(
                       $sformatf("%0s_seq", xbar_devices[i].device_name));
+      device_seq[i].d_error_pct = $urandom_range(0, 70);
     end
-  endfunction : seq_init
+  endfunction : pre_randomize
+
+  function void post_randomize();
+    foreach (host_seq[i]) begin
+      if (en_req_abort) host_seq[i].req_abort_pct = $urandom_range(0, 100);
+    end
+    foreach (device_seq[i]) begin
+      if (en_rsp_abort) device_seq[i].rsp_abort_pct = $urandom_range(0, 100);
+    end
+  endfunction : post_randomize
 
   virtual task run_all_device_seq_nonblocking(bit out_of_order_rsp = 1);
     if (do_device_rsp) begin
@@ -68,7 +88,6 @@ class xbar_base_vseq extends dv_base_vseq #(.CFG_T               (xbar_env_cfg),
   endtask
 
   virtual task run_host_seq(uint host_id);
-    host_seq[host_id].valid_host_id_width = cfg.valid_host_id_width;
     host_seq[host_id].start(p_sequencer.host_seqr[host_id]);
     `uvm_info(get_full_name(), $sformatf("%0s finished sending %0d requests",
                                host_seq[host_id].get_full_name(),

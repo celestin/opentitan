@@ -175,11 +175,29 @@ module rv_plic import rv_plic_reg_pkg::*; #(
   assign prio[78] = reg2hw.prio78.q;
   assign prio[79] = reg2hw.prio79.q;
   assign prio[80] = reg2hw.prio80.q;
+  assign prio[81] = reg2hw.prio81.q;
+  assign prio[82] = reg2hw.prio82.q;
+  assign prio[83] = reg2hw.prio83.q;
+  assign prio[84] = reg2hw.prio84.q;
+  assign prio[85] = reg2hw.prio85.q;
+  assign prio[86] = reg2hw.prio86.q;
+  assign prio[87] = reg2hw.prio87.q;
+  assign prio[88] = reg2hw.prio88.q;
+  assign prio[89] = reg2hw.prio89.q;
+  assign prio[90] = reg2hw.prio90.q;
+  assign prio[91] = reg2hw.prio91.q;
+  assign prio[92] = reg2hw.prio92.q;
+  assign prio[93] = reg2hw.prio93.q;
+  assign prio[94] = reg2hw.prio94.q;
+  assign prio[95] = reg2hw.prio95.q;
+  assign prio[96] = reg2hw.prio96.q;
+  assign prio[97] = reg2hw.prio97.q;
+  assign prio[98] = reg2hw.prio98.q;
 
   //////////////////////
   // Interrupt Enable //
   //////////////////////
-  for (genvar s = 0; s < 81; s++) begin : gen_ie0
+  for (genvar s = 0; s < 99; s++) begin : gen_ie0
     assign ie[0][s] = reg2hw.ie0[s].q;
   end
 
@@ -205,7 +223,7 @@ module rv_plic import rv_plic_reg_pkg::*; #(
   ////////
   // IP //
   ////////
-  for (genvar s = 0; s < 81; s++) begin : gen_ip
+  for (genvar s = 0; s < 99; s++) begin : gen_ip
     assign hw2reg.ip[s].de = 1'b1; // Always write
     assign hw2reg.ip[s].d  = ip[s];
   end
@@ -213,7 +231,7 @@ module rv_plic import rv_plic_reg_pkg::*; #(
   ///////////////////////////////////
   // Detection:: 0: Level, 1: Edge //
   ///////////////////////////////////
-  for (genvar s = 0; s < 81; s++) begin : gen_le
+  for (genvar s = 0; s < 99; s++) begin : gen_le
     assign le[s] = reg2hw.le[s].q;
   end
 
@@ -221,18 +239,18 @@ module rv_plic import rv_plic_reg_pkg::*; #(
   // Gateways //
   //////////////
   rv_plic_gateway #(
-    .N_SOURCE (NumSrc)
+    .N_SOURCE   (NumSrc)
   ) u_gateway (
     .clk_i,
     .rst_ni,
 
-    .src (intr_src_i),
-    .le,
+    .src_i      (intr_src_i),
+    .le_i       (le),
 
-    .claim,
-    .complete,
+    .claim_i    (claim),
+    .complete_i (complete),
 
-    .ip
+    .ip_o       (ip)
   );
 
   ///////////////////////////////////
@@ -240,20 +258,20 @@ module rv_plic import rv_plic_reg_pkg::*; #(
   ///////////////////////////////////
   for (genvar i = 0 ; i < NumTarget ; i++) begin : gen_target
     rv_plic_target #(
-      .N_SOURCE (NumSrc),
-      .MAX_PRIO (MAX_PRIO)
+      .N_SOURCE    (NumSrc),
+      .MAX_PRIO    (MAX_PRIO)
     ) u_target (
       .clk_i,
       .rst_ni,
 
-      .ip,
-      .ie        (ie[i]),
+      .ip_i        (ip),
+      .ie_i        (ie[i]),
 
-      .prio,
-      .threshold (threshold[i]),
+      .prio_i      (prio),
+      .threshold_i (threshold[i]),
 
-      .irq       (irq_o[i]),
-      .irq_id    (irq_id_o[i])
+      .irq_o       (irq_o[i]),
+      .irq_id_o    (irq_id_o[i])
 
     );
   end

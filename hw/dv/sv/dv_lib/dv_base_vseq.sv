@@ -25,18 +25,42 @@ class dv_base_vseq #(type RAL_T               = dv_base_reg_block,
   // knobs to enable pre_start routines
   bit do_dut_init       = 1'b1;
   bit do_apply_reset    = 1'b1;
-  bit do_wait_for_reset = 1'b1;
+  bit do_wait_for_reset = 1'b0;
 
   // knobs to enable post_start routines
   bit do_dut_shutdown   = 1'b1;
 
+  // various knobs to enable certain routines
+  // this knob allows user to disable assertions in csr_hw_reset before random write sequence,
+  // the assertions will turn back on after the hw reset deasserted
+  bit enable_asserts_in_hw_reset_rand_wr  = 1'b1;
+
   `uvm_object_new
 
-  task pre_start();
-    super.pre_start();
+  virtual function void set_handles();
+    `DV_CHECK_NE_FATAL(p_sequencer, null, "Did you forget to call `set_sequencer()`?")
     cfg = p_sequencer.cfg;
     cov = p_sequencer.cov;
     ral = cfg.ral;
+  endfunction
+
+  // This function is invoked in pre_randomize(). Override it in the extended classes to configure
+  // / control the randomization of this sequence.
+  virtual function void configure_vseq();
+  endfunction
+
+  function void pre_randomize();
+    // Set the handles in pre_randomize(), so that the knobs in cfg are available during sequence
+    // randomization. This forces `p_sequencer` handle to be set before the randomization - users
+    // are required to call `set_sequencer()` right after creating the sequence and before
+    // randomizing it.
+    if (cfg == null) set_handles();
+    configure_vseq();
+  endfunction
+
+  task pre_start();
+    super.pre_start();
+    if (cfg == null) set_handles();
     if (do_dut_init) dut_init("HARD");
     num_trans.rand_mode(0);
   endtask
@@ -62,11 +86,11 @@ class dv_base_vseq #(type RAL_T               = dv_base_reg_block,
 
   virtual task apply_reset(string kind = "HARD");
     if (kind == "HARD") begin
-      csr_utils_pkg::reset_asserted();
       cfg.clk_rst_vif.apply_reset();
-      csr_utils_pkg::reset_deasserted();
     end
-    if (cfg.has_ral) ral.reset(kind);
+    if (cfg.has_ral) begin
+      foreach (cfg.ral_models[i]) cfg.ral_models[i].reset(kind);
+    end
   endtask
 
   virtual task wait_for_reset(string reset_kind     = "HARD",
@@ -160,28 +184,43 @@ class dv_base_vseq #(type RAL_T               = dv_base_reg_block,
       string        reset_type = "HARD";
       csr_write_seq m_csr_write_seq;
 
+      // Writing random values to CSRs might trigger assertion errors. So we disable in the entire
+      // DUT hierarchy and re-enable after resetting the DUT. See DV_ASSERT_CTRL macro defined in
+      // hw/dv/sv/dv_utils/dv_macros.svh for more details.
+      if (!enable_asserts_in_hw_reset_rand_wr) begin
+        `DV_ASSERT_CTRL_REQ("dut_assert_en", 1'b0)
+      end
+
       // run write-only sequence to randomize the csr values
       m_csr_write_seq = csr_write_seq::type_id::create("m_csr_write_seq");
-      m_csr_write_seq.models.push_back(ral);
-      m_csr_write_seq.set_csr_excl_item(csr_excl);
+      m_csr_write_seq.models = cfg.ral_models;
       m_csr_write_seq.external_checker = cfg.en_scb;
+      m_csr_write_seq.en_rand_backdoor_write = 1'b1;
+      m_csr_write_seq.set_csr_excl_item(csr_excl);
       m_csr_write_seq.start(null);
 
       // run dut_shutdown before asserting reset
       dut_shutdown();
-
       // issue reset
       void'($value$plusargs("do_reset=%0s", reset_type));
       dut_init(reset_type);
+      if (!enable_asserts_in_hw_reset_rand_wr) begin
+        `DV_ASSERT_CTRL_REQ("dut_assert_en", 1'b1)
+      end
     end
 
     // create base csr seq and pass our ral
     m_csr_seq = csr_base_seq::type_id::create("m_csr_seq");
-    m_csr_seq.num_test_csrs = num_test_csrs;
-    m_csr_seq.models.push_back(ral);
-    m_csr_seq.set_csr_excl_item(csr_excl);
+    m_csr_seq.models = cfg.ral_models;
     m_csr_seq.external_checker = cfg.en_scb;
+    m_csr_seq.num_test_csrs = num_test_csrs;
+    m_csr_seq.set_csr_excl_item(csr_excl);
     m_csr_seq.start(null);
   endtask
+
+  // enable/disable csr_assert
+  virtual function void set_csr_assert_en(bit enable, string path = "*");
+    uvm_config_db#(bit)::set(null, path, "csr_assert_en", enable);
+  endfunction
 
 endclass

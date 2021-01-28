@@ -11,7 +11,7 @@ class gpio_stress_all_vseq extends gpio_base_vseq;
   `uvm_object_new
 
   task body();
-    string seq_names[] = {"gpio_sanity_vseq",
+    string seq_names[] = {"gpio_smoke_vseq",
                           // "gpio_common_vseq",
                           // does not support intr_test as plus_arg disable do_clear_all_interrupts
                           "gpio_random_dout_din_vseq",
@@ -28,7 +28,7 @@ class gpio_stress_all_vseq extends gpio_base_vseq;
       `downcast(gpio_vseq, seq)
 
       // hard_reset in dut_init can be skipped
-      if (do_dut_init) gpio_vseq.do_init_reset = $urandom_range(0, 1);
+      if (do_apply_reset) gpio_vseq.do_init_reset = $urandom_range(0, 1);
       else gpio_vseq.do_init_reset = 0;
 
       gpio_vseq.set_sequencer(p_sequencer);

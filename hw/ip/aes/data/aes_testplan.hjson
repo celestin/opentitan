@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 {
   name: "aes"
-  import_testplans: ["hw/dv/tools/testplans/csr_testplan.hjson",
-                     "hw/dv/tools/testplans/tl_device_access_types_testplan.hjson"]
+  import_testplans: ["hw/dv/tools/dvsim/testplans/csr_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/shadow_reg_errors_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/alert_test_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/tl_device_access_types_testplan.hjson"]
   entries: [
    // {
    //   name: default_setting
@@ -21,25 +23,25 @@
       tests: ["aes_wake_up"]
     }
     {
-      name: sanity
+      name: smoke
       desc: '''
            Encrypt a plain text read it back - decrypt and compare to input but use reference model to compare after both encryption and decryption.'''
       milestone: V1
-      tests: ["aes_sanity"]
+      tests: ["aes_smoke"]
     }
     {
       name: algorithm
       desc: '''
            Compare cypher text from DUT with the output of a C model using same key and data.'''
            milestone: V2
-      tests: ["aes_sanity"]
+      tests: ["aes_smoke", "aes_config_error"]
     }
     {
       name: key_length
       desc: '''
            Randomly select key length to verify all supported key lengths are working.'''
            milestone: V2
-      tests: []
+      tests: ["aes_stress", "aes_smoke", "aes_config_error"]
     }
     {
       name: back2back
@@ -47,14 +49,14 @@
            Randomly select the spacing between consecutive messages and blocks from 0 - n clock cycles.
            The distribution will be weighted toward no and small gaps (0-10 cycles) but will also cover larger gaps.'''
       milestone: V2
-      tests: []
+      tests: ["aes_b2b", "aes_stress"]
     }
     {
       name: backpressure
       desc: '''
         Try to write data to registers without offloading the DUT output to verify Stall functionality.'''
         milestone: V2
-      tests: []
+      tests: ["aes_stress"]
     }
     {
       name: multi_message
@@ -62,7 +64,7 @@
         Run multiple messages in a random mix of encryption / decryption.
         Each message should select its mode randomly.'''
       milestone: V2
-      tests: []
+      tests: ["aes_stress", "aes_smoke", "aes_config_error"]
     }
     {
       name: failure_test
@@ -75,7 +77,7 @@
               Will result match plain text and vice.
             - Write unsupported configurations (Key length and mode are 1 hot, what happens if more than one bit is set.)'''
       milestone: V2
-      tests: []
+      tests: ["aes_config_error"]
     }
     {
       name: trigger_clear_test
@@ -112,7 +114,7 @@
       desc: '''
             This will combine the other individual testpoints to ensure we stress test everything across the board.'''
       milestone: V2
-      tests: []
+      tests: ["aes_stress"]
     }
     {
       name: deinitialization

@@ -51,6 +51,28 @@ class alert_esc_agent extends dv_base_agent#(
     if (!uvm_config_db#(virtual alert_esc_if)::get(this, "", "vif", cfg.vif)) begin
       `uvm_fatal(`gfn, "failed to get alert_esc_if handle from uvm_config_db")
     end
+    // get esc_en signal for esc_monitor
+    if (cfg.is_active && !cfg.is_alert && cfg.if_mode == Device) begin
+      if (!uvm_config_db#(virtual alert_esc_probe_if)::get(this, "", "probe_vif", cfg.probe_vif))
+          begin
+        `uvm_fatal(`gfn, "failed to get probe_vif handle from uvm_config_db")
+      end
+    end
+
+    // set variables to alert_esc interface
+    cfg.vif.is_async = cfg.is_async;
+    cfg.vif.is_alert = cfg.is_alert;
+    cfg.vif.if_mode  = cfg.if_mode;
+    // set async alert clock frequency
+    if (cfg.is_alert && cfg.is_async) begin
+      cfg.vif.clk_rst_async_if.set_active(.drive_rst_n_val(0));
+      if (cfg.clk_freq_mhz > 0) begin
+        int min_freq_mhz = (cfg.clk_freq_mhz / 10) ? (cfg.clk_freq_mhz / 10) : 1;
+        cfg.vif.clk_rst_async_if.set_freq_mhz($urandom_range(min_freq_mhz, cfg.clk_freq_mhz * 10));
+      end else begin
+        cfg.vif.clk_rst_async_if.set_freq_mhz($urandom_range(10, 240));
+      end
+    end
   endfunction
 
 endclass : alert_esc_agent

@@ -4,101 +4,91 @@
 
 class i2c_device_driver extends i2c_driver;
   `uvm_component_utils(i2c_device_driver)
-
-  bit [data_width-1:0] data_byte;
-  bit [addr_width-1:0] addr_byte;
-  bit rw_dir;
-
   `uvm_component_new
 
-  virtual task run_phase(uvm_phase phase);
-    get_and_drive();
-  endtask : run_phase
+  rand bit [7:0] rd_data[256]; // max length of read transaction
 
-  // drive trans received from sequencer
+  bit [7:0] wr_data;
+  bit [7:0] address;
+
+  // get an array with unique read data
+  constraint rd_data_c {
+    unique { rd_data };
+  }
+
+  virtual task process_reset();
+    @(negedge cfg.vif.rst_ni);
+    cfg.vif.scl_o = 1'b1;
+    cfg.vif.sda_o = 1'b1;
+    `uvm_info(`gfn, "\ndevice driver is reset", UVM_DEBUG)
+  endtask : process_reset
+
   virtual task get_and_drive();
+    bit [7:0] rd_data_cnt = 8'd0;
+    i2c_item rsp_item;
+
+    @(posedge cfg.vif.rst_ni);
     forever begin
-      seq_item_port.get(req);     // get req handler with type i2c_item
-      $cast(rsp, req.clone());
-      rsp.set_id_info(req);
-      `uvm_info(`gfn, $sformatf("i2c gets next item:\n%0s", req.sprint()), UVM_DEBUG)
-      // address phase
-      process_address();
-      // data phase
-      if (rw_dir == 1'b1 && cfg.en_monitor == 1'b1)      process_read_data();
-      else if (rw_dir == 1'b0 && cfg.en_monitor == 1'b1) process_write_data();
-      // send rsp back to seq
-      `uvm_info(`gfn, "device item sent", UVM_DEBUG)
-      seq_item_port.put_response(rsp);
+      cfg.vif.scl_o = 1'b1;
+      cfg.vif.sda_o = 1'b1;
+      // device driver responses to dut
+      seq_item_port.get_next_item(rsp_item);
+      fork
+        begin: iso_fork
+          fork
+            unique case (rsp_item.drv_type)
+              DevAck: begin
+                cfg.timing_cfg.tStretchHostClock = gen_num_stretch_host_clks(cfg.timing_cfg);
+                fork
+                  // host clock stretching allows a high-speed host to communicate
+                  // with a low-speed device by setting TIMEOUT_CTRL.EN bit
+                  // the device asks host stretching its scl_i by pulling down scl_o
+                  // the host clock pulse is extended until device scl_o is pulled up
+                  // once scl_o is pulled down longer than TIMEOUT_CTRL.VAL field,
+                  // intr_stretch_timeout_o is asserted (ref. https://www.i2c-bus.org/clock-stretching)
+                  cfg.vif.device_stretch_host_clk(cfg.timing_cfg);
+                  cfg.vif.device_send_ack(cfg.timing_cfg);
+                join
+              end
+              RdData: begin
+                if (rd_data_cnt == 8'd0) `DV_CHECK_MEMBER_RANDOMIZE_FATAL(rd_data)
+                for (int i = 7; i >= 0; i--) begin
+                  cfg.vif.device_send_bit(cfg.timing_cfg, rd_data[rd_data_cnt][i]);
+                end
+                `uvm_info(`gfn, $sformatf("\ndriver, trans %0d, byte %0d  %0x",
+                    rsp_item.tran_id, rsp_item.num_data+1, rd_data[rd_data_cnt]), UVM_DEBUG)
+                // rd_data_cnt is rollled back (no overflow) after reading 256 bytes
+                rd_data_cnt++;
+              end
+              WrData:
+                // TODO: consider adding memory (associative array) in device_driver
+                for (int i = 7; i >= 0; i--) begin
+                  cfg.vif.get_bit_data("host", cfg.timing_cfg, wr_data[i]);
+                end
+              default: begin
+                `uvm_fatal(`gfn, $sformatf("\ndriver, received invalid request from monitor/seq"))
+              end
+            endcase
+            // handle on-the-fly reset
+            begin
+              process_reset();
+              rsp_item.clear_all();
+            end
+          join_any
+          disable fork;
+        end: iso_fork
+      join
+      seq_item_port.item_done();
     end
   endtask : get_and_drive
 
-  task process_address();
-    // device waits for START/RESTART on bus
-    cfg.vif.wait_for_start_repstart_from_host(cfg.thd_sta, cfg.tsu_sta);
-    `uvm_info(`gfn, $sformatf("i2c request type %d (R/W=1/0)", addr_byte[0]), UVM_DEBUG)
-    // device gets address bits from host
-    for (int i = 1; i < addr_width; i++) begin
-      wait(cfg.vif.scl_i == 1'b1);
-      addr_byte[i] = cfg.vif.sda_i;
-      cfg.vif.bus_status = HostSendAddr;
-    end
-    // device gets r/w bit from host
-    wait(cfg.vif.scl_i == 1'b1);
-    addr_byte[0] = cfg.vif.sda_i;
-    rw_dir = cfg.vif.sda_i;
-    cfg.vif.bus_status = HostSendRWBit;
-    rsp.addr = addr_byte;
-    rsp.mem_addrs.push_front(addr_byte);
-    // device sends ack to host
-    cfg.vif.wait_for_dly(req.dly_to_send_ack);
-    cfg.vif.send_ack_by_device(cfg.tvd_ack);
-  endtask : process_address
-
-  task process_read_data();
-    `uvm_info(`gfn, $sformatf("i2c processes read data"), UVM_DEBUG)
-    // if mem_datas is empty then return a random read data to response host
-    data_byte = (req.mem_datas.size()>0) ? req.mem_datas.pop_back() : gen_rand_rd_data();
-    // bit serialization
-    for (int i = 0; i < data_width; i++) begin
-      cfg.vif.scl_o <= 1'b0;
-      // send data bit
-      cfg.vif.scl_o <= 1'b0;
-      cfg.vif.wait_for_dly(req.dly_to_send_data);
-      cfg.vif.scl_o <= 1'b1;
-      cfg.vif.sda_o <= data_byte[i];
-      cfg.vif.bus_status = HostReceiveData;
-      // device must ensure hold time thd_dat when sending read data
-      repeat(cfg.thd_dat) @(posedge cfg.vif.clk_i);
-    end
-    rsp.rd_data = data_byte;
-    // wait for nack from host
-    cfg.vif.wait_for_nack_from_host(cfg.tvd_ack);
-    // wait for stop/restart from host
-    cfg.vif.wait_for_stop_or_restart_from_host(cfg.tsu_sta, cfg.tsu_sto);
-  endtask : process_read_data
-
-  task process_write_data();
-    `uvm_info(`gfn, $sformatf("i2c processes write data"), UVM_DEBUG)
-    // bit concatenation
-    for (int i = 0; i < data_width; i++) begin
-      wait(cfg.vif.scl_i == 1'b1)
-      data_byte[i] = cfg.vif.sda_i;
-      cfg.vif.bus_status = HostWriteData;
-    end
-    rsp.wr_data = data_byte;
-    rsp.mem_datas.push_front(data_byte);
-    // device sends ack to host
-    cfg.vif.wait_for_dly(req.dly_to_send_ack);
-    cfg.vif.send_ack_by_device(cfg.tvd_ack);
-    // wait for stop/restart from host
-    cfg.vif.wait_for_dly(req.dly_to_send_stop);
-    cfg.vif.wait_for_stop_or_restart_from_host(cfg.tsu_sta, cfg.tsu_sto);
-  endtask : process_write_data
-
-  function gen_rand_rd_data();
-    return $urandom_range((1 << data_width) - 1, 0);
-  endfunction
+  function int gen_num_stretch_host_clks(ref timing_cfg_t tc);
+    // By randomly pulling down scl_o "offset" within [0:2*tc.tTimeOut],
+    // intr_stretch_timeout_o interrupt would be generated uniformly
+    // To test this feature more regressive, there might need a dedicated vseq (V2)
+    // in which TIMEOUT_CTRL.EN is always set.
+    return $urandom_range(tc.tClockPulse, tc.tClockPulse + 2*tc.tTimeOut);
+  endfunction : gen_num_stretch_host_clks
 
 endclass : i2c_device_driver
 

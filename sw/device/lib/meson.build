@@ -4,23 +4,10 @@
 
 subdir('base')
 subdir('arch')
+subdir('crt')
+subdir('dif')
 subdir('runtime')
 subdir('testing')
-subdir('dif')
-
-# UART library (sw_lib_uart)
-sw_lib_uart = declare_dependency(
-  link_with: static_library(
-    'uart_ot',
-    sources: ['uart.c'],
-    dependencies: [
-      sw_lib_base_print,
-      sw_lib_runtime_ibex,
-      dif_uart,
-      top_earlgrey,
-    ],
-  )
-)
 
 # Flash controller library (sw_lib_flash_ctrl)
 sw_lib_flash_ctrl = declare_dependency(
@@ -92,56 +79,23 @@ sw_lib_irq = declare_dependency(
 
 # IRQ Handlers Library
 #
-# handler.c contains various definitions with weak linkage, for symbols
-# referenced in irq_vectors.S
+# handler.c contains various definitions with weak linkage, for interrupt
+# handler symbols referenced from riscv_crt.
 #
-# To override default handlers, use the definitions in handler.h, and either
-# link to this library to pick up the other default definitions, or include
-# irq_vectors.S as a source dependency.
+# To override default handlers, implement the declarations in handler.h, and
+# link to this library to pick up the other default definitions, if needed.
+#
+# If you are getting errors for functions beginning `handler_` when linking a
+# device executable, it's likely because you forgot to link this library.
 sw_lib_irq_handlers = declare_dependency(
-  # The IRQ handler definitions need to be included as a "source" rather than
-  # as part of a static library; this ensures that it is linked in as a .o
-  # file, so the .vectors section is picked up.
-  sources: ['irq_vectors.S'],
   link_with: static_library(
     'irq_default_handlers_ot',
     sources: [
       'handler.c',
     ],
     dependencies: [
-      sw_lib_irq,
-      sw_lib_runtime_ibex,
-      sw_lib_uart,
+      sw_lib_runtime_log,
     ],
-  )
-)
-
-# RV_TIMER library (sw_lib_rv_timer)
-sw_lib_rv_timer = declare_dependency(
-  link_with: static_library(
-    'rv_timer_ot',
-    sources: [
-      hw_ip_rv_timer_reg_h,
-      'rv_timer.c',
-    ],
-    dependencies: [
-      sw_lib_runtime_ibex,
-      top_earlgrey,
-    ],
-  )
-)
-
-# SPI device library (sw_lib_spi_device)
-sw_lib_spi_device = declare_dependency(
-  link_with: static_library(
-    'spid_ot',
-    sources: [
-      hw_ip_spi_device_reg_h,
-      'spi_device.c',
-    ],
-    dependencies: [
-      top_earlgrey,
-    ]
   )
 )
 
@@ -156,7 +110,6 @@ sw_lib_usb = declare_dependency(
       'usbdev.c',
     ],
     dependencies: [
-      sw_lib_uart,
       top_earlgrey,
     ]
   )

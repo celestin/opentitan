@@ -1,11 +1,17 @@
+// Copyright lowRISC contributors.
+// Copyright Luke Valenty (TinyFPGA project)
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+//
 // Converted from common/usb_serial_ctrl_ep.v
 // -- move from CDC to Google simple serial protocol
 // -- conform to lowRISC coding style
 
 module usb_serial_ctrl_ep  #(
   parameter int unsigned MaxPktSizeByte = 32,
-  // localparam below here
-  parameter int unsigned PktW = $clog2(MaxPktSizeByte)
+
+  // Derived parameters
+  localparam int unsigned PktW = $clog2(MaxPktSizeByte)
 ) (
   input              clk_i,
   input              rst_ni,
@@ -81,7 +87,7 @@ module usb_serial_ctrl_ep  #(
   logic [7:0] bmRequestType, raw_setup_data [8];
   // Alias for the setup bytes using names from USB spec
   usb_setup_request_e bRequest;
-  logic [15:0] wValue, wLength; //wIndex
+  logic [15:0] wValue, wLength, wIndex;
 
   logic setup_pkt_start, has_data_stage, out_data_stage, in_data_stage;
   assign setup_pkt_start = pkt_start && out_ep_setup_i;
@@ -122,7 +128,7 @@ module usb_serial_ctrl_ep  #(
     status_stage_end = 1'b0;
     send_zero_length_data_pkt = 1'b0;
 
-    case (ctrl_xfr_state)
+    unique case (ctrl_xfr_state)
       StIdle: begin
         if (setup_pkt_start) begin
           ctrl_xfr_state_next = StSetup;
@@ -208,13 +214,15 @@ module usb_serial_ctrl_ep  #(
   assign bmRequestType = raw_setup_data[0];
   assign bRequest = usb_setup_request_e'(raw_setup_data[1]);
   assign wValue = {raw_setup_data[3][7:0], raw_setup_data[2][7:0]};
-//assign wIndex = {raw_setup_data[5][7:0], raw_setup_data[4][7:0]};
+  assign wIndex = {raw_setup_data[5][7:0], raw_setup_data[4][7:0]};
   assign wLength = {raw_setup_data[7][7:0], raw_setup_data[6][7:0]};
   // suppress warning
   logic [6:0]  unused_bmR;
   logic        unused_wValue;
+  logic [15:0] unused_wIndex;
   assign unused_bmR = bmRequestType[6:0];
   assign unused_wValue = wValue[7];
+  assign unused_wIndex = wIndex;
 
   // Check of upper put_addr bits needed because CRC will be sent (10 bytes total)
   always_ff @(posedge clk_i) begin
@@ -225,6 +233,8 @@ module usb_serial_ctrl_ep  #(
 
   // Send setup data (which will be empty in case of a SET operation and
   // come from the ROM in the case of a GET)
+  usb_dscr_type_e dscr_type;
+  assign dscr_type = usb_dscr_type_e'(wValue[15:8]);
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       dev_addr_int <= '0;
@@ -234,39 +244,39 @@ module usb_serial_ctrl_ep  #(
       if (setup_stage_end) begin
         bytes_sent <= '0;
         // Command (bRequest) and sub-command (wValue) come from USB spec
-        case (bRequest)
+        unique case (bRequest)
           SetupGetDescriptor: begin
-            case (usb_dscr_type_e'(wValue[15:8]))
+            unique case (dscr_type)
               DscrTypeDevice: begin
                 in_ep_stall_o <= 1'b0;
-                rom_addr    <= 'h00;
-                rom_length  <= 'h12;
+                rom_addr      <= 7'h00;
+                rom_length    <= 7'h12;
               end
 
               DscrTypeConfiguration: begin
                 in_ep_stall_o <= 1'b0;
-                rom_addr    <= 'h12;
-                rom_length  <= (9+9+7+7);
+                rom_addr      <= 7'h12;
+                rom_length    <= 7'h20; // 9+9+7+7
               end
 
               DscrTypeDevQual: begin
                 in_ep_stall_o <= 1'b1;
-                rom_addr   <= 'h00;
-                rom_length <= 'h00;
+                rom_addr      <= 7'h00;
+                rom_length    <= 7'h00;
               end
 
               default begin
                 in_ep_stall_o <= 1'b0;
-                rom_addr   <= 'h00;
-                rom_length <= 'h00;
+                rom_addr      <= 7'h00;
+                rom_length    <= 7'h00;
               end
             endcase
           end
 
           SetupSetAddress: begin
             in_ep_stall_o <= 1'b0;
-            rom_addr   <= 'h00;
-            rom_length <= 'h00;
+            rom_addr      <= 7'h00;
+            rom_length    <= 7'h00;
 
             // we need to save the address after the status stage ends
             // this is because the status stage token will still be using
@@ -277,19 +287,19 @@ module usb_serial_ctrl_ep  #(
 
           SetupSetConfiguration: begin
             in_ep_stall_o <= 1'b0;
-            rom_addr   <= 'h00;
-            rom_length <= 'h00;
+            rom_addr      <= 7'h00;
+            rom_length    <= 7'h00;
           end
 
           default begin
             in_ep_stall_o <= 1'b0;
-            rom_addr   <= 'h00;
-            rom_length <= 'h00;
+            rom_addr      <= 7'h00;
+            rom_length    <= 7'h00;
           end
         endcase
       end else if ((ctrl_xfr_state == StDataIn) && more_data_to_send && in_ep_data_get_i) begin
-        rom_addr <= rom_addr + 1'b1;
-        bytes_sent <= bytes_sent + 1'b1;
+        rom_addr   <= rom_addr + 7'h1;
+        bytes_sent <= bytes_sent + 8'h1;
       end else if (status_stage_end) begin
         bytes_sent <= '0;
         rom_addr <= '0;

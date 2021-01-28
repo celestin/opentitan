@@ -156,9 +156,15 @@ the ideal baud rate.
 
 The baud rate is set by writing to the {{< regref "CTRL.NCO" >}} register field. This should be
 set using the equation below, where `f_pclk` is the system clock frequency
-provided to the UART. and `f_baud` is the desired baud rate (in bits per second).
+provided to the UART, and `f_baud` is the desired baud rate (in bits per second).
 
-$$ NCO = {{2^{20} * f\_{baud}} \over {f\_{pclk}}} $$
+$$ NCO = 16 \times {{2^{$bits(NCO)} \times f\_{baud}} \over {f\_{pclk}}} $$
+
+The formula above depends on the NCO CSR width.
+The logic creates a x16 tick when the NCO counter overflows.
+So, the computed baud rate from NCO value is below.
+
+$$ f\_{baud} = {{1 \over 16} \times {NCO \over {2^{$bits(NCO)}}} \times {f\_{pclk}}} $$
 
 Note that the NCO result from the above formula can be a fraction but
 the NCO register only accepts an integer value. This will create an
@@ -186,8 +192,8 @@ an integer so that the error in the target range then the baud rate
 can be supported, however if it is too far off an integer then the
 baud rate cannot be supported. This check is needed when
 
-$$ {{baud} < {{40 * f\_{pclk}} \over {2^{20}}}} \qquad OR \qquad
-{{f\_{pclk}} > {{{2^{20}} * {baud}} \over {40}}} $$
+$$ {{baud} < {{40 * f\_{pclk}} \over {2^{$bits(NCO)+4}}}} \qquad OR \qquad
+{{f\_{pclk}} > {{{2^{$bits(NCO)+4}} * {baud}} \over {40}}} $$
 
 Using rounded frequencies and common baud rates, this implies that
 care is needed for 9600 baud and below if the system clock is under
@@ -310,7 +316,7 @@ character from the RX FIFO and right after it there is a baud clock tick and the
 start of a new RX transaction from the host, the timeout time is reduced by 1
 and half baud clock periods.
 
-## rx_partity_err
+#### rx_partity_err
 The `rx_parity_err` interrupt is triggered if parity is enabled and
 the RX parity bit does not match the expected polarity as programmed
 in {{< regref "CTRL.PARITY_ODD" >}}.
@@ -344,7 +350,7 @@ be unexpected overflow).
 #define CLK_FIXED_FREQ_HZ (50ULL * 1000 * 1000)
 
 void uart_init(unsigned int baud) {
-  // nco = 2^20 * baud / fclk
+  // nco = 2^20 * baud / fclk. Assume NCO width is 16bit.
   uint64_t uart_ctrl_nco = ((uint64_t)baud << 20) / CLK_FIXED_FREQ_HZ;
   REG32(UART_CTRL(0)) =
       ((uart_ctrl_nco & UART_CTRL_NCO_MASK) << UART_CTRL_NCO_OFFSET) |
@@ -385,7 +391,7 @@ void uart_send_char(char val) {
 }
 
 void uart_send_str(char *str) {
-  while(*str != \0) {
+  while(*str != '\0') {
     uart_send_char(*str++);
 }
 ```
@@ -472,6 +478,10 @@ character arrives just before the timeout for the first (resetting the
 timer), the third just before the timeout from the second etc. In this
 case the host will eventually get a watermark interrupt, this will happen
 `((RXILVL - 1)*timeout)` after the first character was received.
+
+## Device Interface Functions (DIFs)
+
+{{< dif_listing "sw/device/lib/dif/dif_uart.h" >}}
 
 ## Register Table
 

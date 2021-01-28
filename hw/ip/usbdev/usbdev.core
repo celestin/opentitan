@@ -9,6 +9,7 @@ filesets:
     depend:
       - lowrisc:prim:all
       - lowrisc:ip:tlul
+      - lowrisc:prim:ram_2p_async_adv
       - lowrisc:ip:usb_fs_nb_pe
     files:
       - rtl/usbdev_reg_pkg.sv
@@ -38,6 +39,12 @@ filesets:
       - lint/usbdev.waiver
     file_type: waiver
 
+  files_veriblelint_waiver:
+    depend:
+      # common waivers
+      - lowrisc:lint:common
+      - lowrisc:lint:comportable
+
   files_formal:
     files:
       - dv/tb/usbdev_bind.sv
@@ -52,9 +59,10 @@ parameters:
 targets:
   default: &default_target
     filesets:
-      - tool_verilator  ? (files_verilator_waiver)
-      - tool_ascentlint ? (files_ascentlint_waiver)
-      - target_formal   ? (files_formal)
+      - tool_verilator   ? (files_verilator_waiver)
+      - tool_ascentlint  ? (files_ascentlint_waiver)
+      - tool_veriblelint ? (files_veriblelint_waiver)
+      - target_formal    ? (files_formal)
       - files_rtl
     toplevel: usbdev
 

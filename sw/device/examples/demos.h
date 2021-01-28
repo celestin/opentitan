@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #include "sw/device/lib/dif/dif_gpio.h"
+#include "sw/device/lib/dif/dif_spi_device.h"
+#include "sw/device/lib/dif/dif_uart.h"
 
 /**
  * This header provides a small library of reuseable demos for use with
@@ -39,14 +41,15 @@ uint32_t demo_gpio_to_log_echo(dif_gpio_t *gpio, uint32_t prev_gpio_state);
  * Attempts to read at most 32 bytes from SPI, and echo them as printable
  * characters to LOG.
  */
-void demo_spi_to_log_echo(void);
+void demo_spi_to_log_echo(const dif_spi_device_t *spi);
 
 /**
  * Attempts to read characters from UART and immediately echo them back,
  * as well as to write its bits to GPIO pins 8-15.
  *
+ * @param uart the UART device to actuate.
  * @param gpio the GPIO device to actuate.
  */
-void demo_uart_to_uart_and_gpio_echo(dif_gpio_t *gpio);
+void demo_uart_to_uart_and_gpio_echo(dif_uart_t *uart, dif_gpio_t *gpio);
 
 #endif  // OPENTITAN_SW_DEVICE_EXAMPLES_DEMOS_H_

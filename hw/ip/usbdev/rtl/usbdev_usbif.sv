@@ -24,7 +24,8 @@ module usbdev_usbif  #(
 
   // Pins (synchronous)
   input  logic                     usb_d_i,
-  input  logic                     usb_se0_i,
+  input  logic                     usb_dp_i,
+  input  logic                     usb_dn_i,
 
   output logic                     usb_d_o,
   output logic                     usb_se0_o,
@@ -47,7 +48,8 @@ module usbdev_usbif  #(
   output logic [RXFifoWidth - 1:0] rx_wdata_o,
   output logic                     event_rx_full_o,
   output logic                     setup_received_o,
-  output [3:0]                     out_endpoint_o,
+  output logic [3:0]               out_endpoint_o,
+  output logic                     out_endpoint_val_o,
 
   // transmit (IN) side
   input  logic [NBufWidth - 1:0]   in_buf_i,
@@ -55,7 +57,8 @@ module usbdev_usbif  #(
   input  logic [NEndpoints-1:0]    in_stall_i,
   input  logic [NEndpoints-1:0]    in_rdy_i,
   output logic                     set_sent_o,
-  output [3:0]                     in_endpoint_o,
+  output logic [3:0]               in_endpoint_o,
+  output logic                     in_endpoint_val_o,
 
   // memory interface
   output logic                     mem_req_o,
@@ -70,6 +73,7 @@ module usbdev_usbif  #(
   output logic                     clr_devaddr_o,
   input  logic [NEndpoints-1:0]    ep_iso_i,
   input  logic                     cfg_eop_single_bit_i, // 1: detect a single SE0 bit as EOP
+  input  logic                     cfg_rx_differential_i, // 1: use differential rx data on usb_d_i
   input  logic                     tx_osc_test_mode_i, // Oscillator test mode: constant JK output
   input  logic [NEndpoints-1:0]    data_toggle_clear_i, // Clear the data toggles for an EP
 
@@ -80,9 +84,11 @@ module usbdev_usbif  #(
   output logic                     link_disconnect_o,
   output logic                     link_connect_o,
   output logic                     link_reset_o,
+  output logic                     link_active_o,
   output logic                     link_suspend_o,
   output logic                     link_resume_o,
   output logic                     link_in_err_o,
+  output logic                     link_out_err_o,
   output logic                     host_lost_o,
   output logic                     rx_crc_err_o,
   output logic                     rx_pid_err_o,
@@ -108,10 +114,13 @@ module usbdev_usbif  #(
   logic                              sof_valid;
 
   // Make sure out_endpoint_o can safely be used to index signals of NEndpoints width.
-  assign out_endpoint_o = (out_ep_current < NEndpoints) ? out_ep_current : '0;
+  assign out_endpoint_val_o = int'(out_ep_current) < NEndpoints;
+  assign out_endpoint_o     = out_endpoint_val_o ? out_ep_current : '0;
+
   assign link_reset_o   = link_reset;
   assign clr_devaddr_o  = ~enable_i | link_reset;
   assign frame_start_o  = sof_valid;
+  assign link_out_err_o = out_ep_rollback;
 
   always_comb begin
     if (out_ep_acked || out_ep_rollback) begin
@@ -121,9 +130,9 @@ module usbdev_usbif  #(
       // In the normal case <MaxPktSizeByte this is out_max_used_q <= out_ep_put_addr
       // Following all ones out_max_used_q will get 1,00..00 and 1,00..01 to cover
       // one and two bytes of the CRC overflowing, then stick at 1,00..01
-      if (out_max_used_q < MaxPktSizeByte - 1) begin
-        out_max_used_d = out_ep_put_addr;
-      end else if (out_max_used_q < MaxPktSizeByte + 1) begin
+      if (int'(out_max_used_q) < MaxPktSizeByte - 1) begin
+        out_max_used_d = {1'b0, out_ep_put_addr};
+      end else if (int'(out_max_used_q) < MaxPktSizeByte + 1) begin
         out_max_used_d = out_max_used_q + 1;
       end else begin
         out_max_used_d = out_max_used_q;
@@ -136,7 +145,7 @@ module usbdev_usbif  #(
 
   // don't write if the address has wrapped (happens for two CRC bytes after max data)
   logic std_write_d, std_write_q;
-  assign std_write_d = out_ep_data_put & ((out_max_used_q < MaxPktSizeByte - 1) &
+  assign std_write_d = out_ep_data_put & ((int'(out_max_used_q) < MaxPktSizeByte - 1) &
       (out_ep_put_addr[1:0] == 2'b11));
 
   always_ff @(posedge clk_48mhz_i or negedge rst_ni) begin
@@ -160,6 +169,9 @@ module usbdev_usbif  #(
           end
           3: begin
             wdata[31:24] <= out_ep_data;
+          end
+          default: begin
+            wdata[7:0] <= out_ep_data;
           end
         endcase
       end
@@ -213,14 +225,15 @@ module usbdev_usbif  #(
   assign setup_received_o = current_setup & rx_wvalid_o;
 
   // IN (device to host) transfers
-  logic                  in_ep_acked, in_ep_data_get, in_data_done, in_ep_newpkt, pkt_start_rd;
+  logic                  in_ep_xfr_end, in_ep_data_get, in_data_done, in_ep_newpkt, pkt_start_rd;
   logic [NEndpoints-1:0] in_ep_data_done;
   logic [PktW-1:0]       in_ep_get_addr;
   logic [7:0]            in_ep_data;
   logic [3:0]            in_ep_current;
 
   // Make sure in_endpoint_o can safely be used to index signals of NEndpoints width.
-  assign in_endpoint_o = (in_ep_current < NEndpoints) ? in_ep_current : '0;
+  assign in_endpoint_val_o = int'(in_ep_current) < NEndpoints;
+  assign in_endpoint_o     = in_endpoint_val_o ? in_ep_current : '0;
 
   // The protocol engine will automatically generate done for a full-length packet
   // Note: this does the correct thing for sending zero length packets
@@ -246,9 +259,10 @@ module usbdev_usbif  #(
   assign in_ep_data = in_ep_get_addr[1] ?
                       (in_ep_get_addr[0] ? mem_rdata_i[31:24] : mem_rdata_i[23:16]) :
                       (in_ep_get_addr[0] ? mem_rdata_i[15:8]  : mem_rdata_i[7:0]);
-  assign set_sent_o = in_ep_acked;
+  assign set_sent_o = in_ep_xfr_end;
 
   logic [10:0]     frame_index_raw;
+  logic            rx_jjj_det;
 
   usb_fs_nb_pe #(
     .NumOutEps      (NEndpoints),
@@ -260,11 +274,13 @@ module usbdev_usbif  #(
     .link_reset_i          (link_reset),
 
     .cfg_eop_single_bit_i  (cfg_eop_single_bit_i),
+    .cfg_rx_differential_i (cfg_rx_differential_i),
     .tx_osc_test_mode_i    (tx_osc_test_mode_i),
     .data_toggle_clear_i   (data_toggle_clear_i),
 
     .usb_d_i               (usb_d_i),
-    .usb_se0_i             (usb_se0_i),
+    .usb_dp_i              (usb_dp_i),
+    .usb_dn_i              (usb_dn_i),
     .usb_d_o               (usb_d_o),
     .usb_se0_o             (usb_se0_o),
     .usb_oe_o              (usb_oe_o),
@@ -287,7 +303,7 @@ module usbdev_usbif  #(
     // in endpoint interfaces
     .in_ep_current_o       (in_ep_current),
     .in_ep_rollback_o      (link_in_err_o),
-    .in_ep_acked_o         (in_ep_acked),
+    .in_ep_xfr_end_o       (in_ep_xfr_end),
     .in_ep_get_addr_o      (in_ep_get_addr),
     .in_ep_data_get_o      (in_ep_data_get),
     .in_ep_newpkt_o        (in_ep_newpkt),
@@ -296,6 +312,9 @@ module usbdev_usbif  #(
     .in_ep_data_i          (in_ep_data),
     .in_ep_data_done_i     (in_ep_data_done),
     .in_ep_iso_i           (ep_iso_i),
+
+    // rx status
+    .rx_jjj_det_o          (rx_jjj_det),
 
     // error signals
     .rx_crc_err_o          (rx_crc_err_o),
@@ -340,12 +359,15 @@ module usbdev_usbif  #(
     .rst_ni            (rst_ni),
     .us_tick_i         (us_tick),
     .usb_sense_i       (usb_sense_i),
-    .usb_rx_d_i        (usb_d_i),
-    .usb_rx_se0_i      (usb_se0_i),
+    .usb_dp_i          (usb_dp_i),
+    .usb_dn_i          (usb_dn_i),
+    .usb_oe_i          (usb_oe_o),
+    .rx_jjj_det_i      (rx_jjj_det),
     .sof_valid_i       (sof_valid),
     .link_disconnect_o (link_disconnect_o),
     .link_connect_o    (link_connect_o),
     .link_reset_o      (link_reset),
+    .link_active_o     (link_active_o),
     .link_suspend_o    (link_suspend_o),
     .link_resume_o     (link_resume_o),
     .link_state_o      (link_state_o),
@@ -355,9 +377,5 @@ module usbdev_usbif  #(
   ////////////////
   // Assertions //
   ////////////////
-
-  // Specified endpoint is not implemented.
-  `ASSERT(UsbIfOutEndPImpl, out_ep_newpkt |-> (out_endpoint_o == out_ep_current), clk_48mhz_i)
-  `ASSERT(UsbIfInEndPImpl, in_ep_newpkt |-> (in_endpoint_o == in_ep_current), clk_48mhz_i)
 
 endmodule

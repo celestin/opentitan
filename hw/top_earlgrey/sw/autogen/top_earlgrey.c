@@ -5,13 +5,13 @@
 #include "hw/top_earlgrey/sw/autogen/top_earlgrey.h"
 
 /**
- * PLIC Interrupt Id to Peripheral Map
+ * PLIC Interrupt Source to Peripheral Map
  *
  * This array is a mapping from `top_earlgrey_plic_irq_id_t` to
  * `top_earlgrey_plic_peripheral_t`.
  */
 const top_earlgrey_plic_peripheral_t
-    top_earlgrey_plic_interrupt_for_peripheral[81] = {
+    top_earlgrey_plic_interrupt_for_peripheral[99] = {
   [kTopEarlgreyPlicIrqIdNone] = kTopEarlgreyPlicPeripheralUnknown,
   [kTopEarlgreyPlicIrqIdGpioGpio0] = kTopEarlgreyPlicPeripheralGpio,
   [kTopEarlgreyPlicIrqIdGpioGpio1] = kTopEarlgreyPlicPeripheralGpio,
@@ -75,7 +75,6 @@ const top_earlgrey_plic_peripheral_t
   [kTopEarlgreyPlicIrqIdNmiGenEsc0] = kTopEarlgreyPlicPeripheralNmiGen,
   [kTopEarlgreyPlicIrqIdNmiGenEsc1] = kTopEarlgreyPlicPeripheralNmiGen,
   [kTopEarlgreyPlicIrqIdNmiGenEsc2] = kTopEarlgreyPlicPeripheralNmiGen,
-  [kTopEarlgreyPlicIrqIdNmiGenEsc3] = kTopEarlgreyPlicPeripheralNmiGen,
   [kTopEarlgreyPlicIrqIdUsbdevPktReceived] = kTopEarlgreyPlicPeripheralUsbdev,
   [kTopEarlgreyPlicIrqIdUsbdevPktSent] = kTopEarlgreyPlicPeripheralUsbdev,
   [kTopEarlgreyPlicIrqIdUsbdevDisconnected] = kTopEarlgreyPlicPeripheralUsbdev,
@@ -92,5 +91,56 @@ const top_earlgrey_plic_peripheral_t
   [kTopEarlgreyPlicIrqIdUsbdevRxBitstuffErr] = kTopEarlgreyPlicPeripheralUsbdev,
   [kTopEarlgreyPlicIrqIdUsbdevFrame] = kTopEarlgreyPlicPeripheralUsbdev,
   [kTopEarlgreyPlicIrqIdUsbdevConnected] = kTopEarlgreyPlicPeripheralUsbdev,
+  [kTopEarlgreyPlicIrqIdUsbdevLinkOutErr] = kTopEarlgreyPlicPeripheralUsbdev,
   [kTopEarlgreyPlicIrqIdPwrmgrWakeup] = kTopEarlgreyPlicPeripheralPwrmgr,
+  [kTopEarlgreyPlicIrqIdOtbnDone] = kTopEarlgreyPlicPeripheralOtbn,
+  [kTopEarlgreyPlicIrqIdKeymgrOpDone] = kTopEarlgreyPlicPeripheralKeymgr,
+  [kTopEarlgreyPlicIrqIdKmacKmacDone] = kTopEarlgreyPlicPeripheralKmac,
+  [kTopEarlgreyPlicIrqIdKmacFifoEmpty] = kTopEarlgreyPlicPeripheralKmac,
+  [kTopEarlgreyPlicIrqIdKmacKmacErr] = kTopEarlgreyPlicPeripheralKmac,
+  [kTopEarlgreyPlicIrqIdOtpCtrlOtpOperationDone] = kTopEarlgreyPlicPeripheralOtpCtrl,
+  [kTopEarlgreyPlicIrqIdOtpCtrlOtpError] = kTopEarlgreyPlicPeripheralOtpCtrl,
+  [kTopEarlgreyPlicIrqIdCsrngCsCmdReqDone] = kTopEarlgreyPlicPeripheralCsrng,
+  [kTopEarlgreyPlicIrqIdCsrngCsEntropyReq] = kTopEarlgreyPlicPeripheralCsrng,
+  [kTopEarlgreyPlicIrqIdCsrngCsHwInstExc] = kTopEarlgreyPlicPeripheralCsrng,
+  [kTopEarlgreyPlicIrqIdCsrngCsFifoErr] = kTopEarlgreyPlicPeripheralCsrng,
+  [kTopEarlgreyPlicIrqIdEdn0EdnCmdReqDone] = kTopEarlgreyPlicPeripheralEdn0,
+  [kTopEarlgreyPlicIrqIdEdn0EdnFifoErr] = kTopEarlgreyPlicPeripheralEdn0,
+  [kTopEarlgreyPlicIrqIdEdn1EdnCmdReqDone] = kTopEarlgreyPlicPeripheralEdn1,
+  [kTopEarlgreyPlicIrqIdEdn1EdnFifoErr] = kTopEarlgreyPlicPeripheralEdn1,
+  [kTopEarlgreyPlicIrqIdEntropySrcEsEntropyValid] = kTopEarlgreyPlicPeripheralEntropySrc,
+  [kTopEarlgreyPlicIrqIdEntropySrcEsHealthTestFailed] = kTopEarlgreyPlicPeripheralEntropySrc,
+  [kTopEarlgreyPlicIrqIdEntropySrcEsFifoErr] = kTopEarlgreyPlicPeripheralEntropySrc,
 };
+
+
+/**
+ * Alert Handler Alert Source to Peripheral Map
+ *
+ * This array is a mapping from `top_earlgrey_alert_id_t` to
+ * `top_earlgrey_alert_peripheral_t`.
+ */
+const top_earlgrey_alert_peripheral_t
+    top_earlgrey_alert_for_peripheral[20] = {
+  [kTopEarlgreyAlertIdAesRecovCtrlUpdateErr] = kTopEarlgreyAlertPeripheralAes,
+  [kTopEarlgreyAlertIdAesFatalFault] = kTopEarlgreyAlertPeripheralAes,
+  [kTopEarlgreyAlertIdOtbnFatal] = kTopEarlgreyAlertPeripheralOtbn,
+  [kTopEarlgreyAlertIdOtbnRecov] = kTopEarlgreyAlertPeripheralOtbn,
+  [kTopEarlgreyAlertIdSensorCtrlAs] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdSensorCtrlCg] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdSensorCtrlGd] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdSensorCtrlTsHi] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdSensorCtrlTsLo] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdSensorCtrlLs] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdSensorCtrlOt] = kTopEarlgreyAlertPeripheralSensorCtrl,
+  [kTopEarlgreyAlertIdKeymgrFaultErr] = kTopEarlgreyAlertPeripheralKeymgr,
+  [kTopEarlgreyAlertIdKeymgrOperationErr] = kTopEarlgreyAlertPeripheralKeymgr,
+  [kTopEarlgreyAlertIdOtpCtrlFatalMacroError] = kTopEarlgreyAlertPeripheralOtpCtrl,
+  [kTopEarlgreyAlertIdOtpCtrlFatalCheckError] = kTopEarlgreyAlertPeripheralOtpCtrl,
+  [kTopEarlgreyAlertIdLcCtrlFatalProgError] = kTopEarlgreyAlertPeripheralLcCtrl,
+  [kTopEarlgreyAlertIdLcCtrlFatalStateError] = kTopEarlgreyAlertPeripheralLcCtrl,
+  [kTopEarlgreyAlertIdEntropySrcRecovAlertCountMet] = kTopEarlgreyAlertPeripheralEntropySrc,
+  [kTopEarlgreyAlertIdSramCtrlMainFatalParityError] = kTopEarlgreyAlertPeripheralSramCtrlMain,
+  [kTopEarlgreyAlertIdSramCtrlRetFatalParityError] = kTopEarlgreyAlertPeripheralSramCtrlRet,
+};
+

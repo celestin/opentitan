@@ -3,12 +3,35 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging as log
+import random
+from collections import OrderedDict
 from copy import deepcopy
 from functools import partial
-from collections import OrderedDict
+from math import ceil, log2
 
-from topgen import lib
-from .intermodule import elab_intermodule
+from topgen import c, lib
+
+
+def _get_random_data_hex_literal(width):
+    """ Fetch 'width' random bits and return them as hex literal"""
+    width = int(width)
+    literal_str = hex(random.getrandbits(width))
+    return literal_str
+
+
+def _get_random_perm_hex_literal(numel):
+    """ Compute a random permutation of 'numel' elements and
+    return as packed hex literal"""
+    num_elements = int(numel)
+    width = int(ceil(log2(num_elements)))
+    idx = [x for x in range(num_elements)]
+    random.shuffle(idx)
+    literal_str = ""
+    for k in idx:
+        literal_str += format(k, '0' + str(width) + 'b')
+    # convert to hex for space efficiency
+    literal_str = hex(int(literal_str, 2))
+    return literal_str
 
 
 def amend_ip(top, ip):
@@ -22,102 +45,177 @@ def amend_ip(top, ip):
         - available_input_list: empty list if doesn't exist
         - available_output_list: empty list if doesn't exist
         - available_inout_list: empty list if doesn't exist
+        - param_list: empty list if doesn't exist
         - interrupt_list: empty list if doesn't exist
         - alert_list: empty list if doesn't exist
+        - wakeup_list: empty list if doesn't exist
     """
-    ip_list_in_top = [x["name"].lower() for x in top["module"]]
+    ip_list_in_top = [x["type"].lower() for x in top["module"]]
+    # TODO make set
     ipname = ip["name"].lower()
-    if not ipname in ip_list_in_top:
+    if ipname not in ip_list_in_top:
         log.info("TOP doens't use the IP %s. Skip" % ip["name"])
         return
 
-    # Find index of the IP
-    ip_idx = ip_list_in_top.index(ipname)
+    # Initialize RNG for compile-time netlist constants.
+    random.seed(int(top['rnd_cnst_seed']))
+
     # Needed to detect async alert transitions below
     ah_idx = ip_list_in_top.index("alert_handler")
 
-    ip_module = top["module"][ip_idx]
+    # Find multiple IPs
+    # Find index of the IP
+    ip_modules = list(
+        filter(lambda module: module["type"] == ipname, top["module"]))
 
-    # Size
-    if not "size" in ip_module:
-        ip_module["size"] = "0x%x" % max(ip["gensize"], 0x1000)
-    elif int(ip_module["size"], 0) < ip["gensize"]:
-        log.error(
-            "given 'size' field in IP %s is smaller than the required space" %
-            ip_module["name"])
+    for ip_module in ip_modules:
+        mod_name = ip_module["name"]
 
-    # bus_device
-    ip_module["bus_device"] = ip["bus_device"]
+        # Size
+        if "size" not in ip_module:
+            ip_module["size"] = "0x%x" % max(ip["gensize"], 0x1000)
+        elif int(ip_module["size"], 0) < ip["gensize"]:
+            log.error(
+                "given 'size' field in IP %s is smaller than the required space"
+                % mod_name)
 
-    # bus_host
-    if "bus_host" in ip and ip["bus_host"] != "":
-        ip_module["bus_host"] = ip["bus_host"]
-    else:
-        ip_module["bus_host"] = "none"
+        # bus_device
+        ip_module["bus_device"] = ip["bus_device"]
 
-    # available_input_list , available_output_list, available_inout_list
-    if "available_input_list" in ip:
-        ip_module["available_input_list"] = ip["available_input_list"]
-        for i in ip_module["available_input_list"]:
-            i.pop('desc', None)
-            i["type"] = "input"
-            i["width"] = int(i["width"])
-    else:
-        ip_module["available_input_list"] = []
-    if "available_output_list" in ip:
-        ip_module["available_output_list"] = ip["available_output_list"]
-        for i in ip_module["available_output_list"]:
-            i.pop('desc', None)
-            i["type"] = "output"
-            i["width"] = int(i["width"])
-    else:
-        ip_module["available_output_list"] = []
-    if "available_inout_list" in ip:
-        ip_module["available_inout_list"] = ip["available_inout_list"]
-        for i in ip_module["available_inout_list"]:
-            i.pop('desc', None)
-            i["type"] = "inout"
-            i["width"] = int(i["width"])
-    else:
-        ip_module["available_inout_list"] = []
+        # bus_host
+        if "bus_host" in ip and ip["bus_host"] != "":
+            ip_module["bus_host"] = ip["bus_host"]
+        else:
+            ip_module["bus_host"] = "none"
 
-    # interrupt_list
-    if "interrupt_list" in ip:
-        ip_module["interrupt_list"] = ip["interrupt_list"]
-        for i in ip_module["interrupt_list"]:
-            i.pop('desc', None)
-            i["type"] = "interrupt"
-            i["width"] = int(i["width"])
-    else:
-        ip_module["interrupt_list"] = []
+        # available_input_list , available_output_list, available_inout_list
+        if "available_input_list" in ip:
+            ip_module["available_input_list"] = deepcopy(
+                ip["available_input_list"])
+            for i in ip_module["available_input_list"]:
+                i.pop('desc', None)
+                i["type"] = "input"
+                i["width"] = int(i["width"])
+        else:
+            ip_module["available_input_list"] = []
+        if "available_output_list" in ip:
+            ip_module["available_output_list"] = deepcopy(
+                ip["available_output_list"])
+            for i in ip_module["available_output_list"]:
+                i.pop('desc', None)
+                i["type"] = "output"
+                i["width"] = int(i["width"])
+        else:
+            ip_module["available_output_list"] = []
+        if "available_inout_list" in ip:
+            ip_module["available_inout_list"] = deepcopy(
+                ip["available_inout_list"])
+            for i in ip_module["available_inout_list"]:
+                i.pop('desc', None)
+                i["type"] = "inout"
+                i["width"] = int(i["width"])
+        else:
+            ip_module["available_inout_list"] = []
 
-    # alert_list
-    if "alert_list" in ip:
-        ip_module["alert_list"] = ip["alert_list"]
-        for i in ip_module["alert_list"]:
-            i.pop('desc', None)
-            i["type"] = "alert"
-            i["width"] = int(i["width"])
-            # automatically insert asynchronous transition if necessary
-            if ip_module["clock_srcs"]["clk_i"] == \
-               top["module"][ah_idx]["clock_srcs"]["clk_i"]:
-                i["async"] = 0
-            else:
-                i["async"] = 1
-    else:
-        ip_module["alert_list"] = []
+        # param_list
+        if "param_list" in ip:
+            ip_module["param_list"] = deepcopy(ip["param_list"])
+            # Removing local parameters.
+            for i in ip["param_list"]:
+                if i["local"] == "true":
+                    ip_module["param_list"].remove(i)
+            # Checking for security-relevant parameters
+            # that are not exposed, adding a top-level name.
+            for i in ip_module["param_list"]:
+                par_name = i["name"]
+                if par_name.lower().startswith("sec") and not i["expose"]:
+                    log.warning("{} has security-critical parameter {} "
+                                "not exposed to top".format(
+                                    mod_name, par_name))
+                # Move special prefixes to the beginnining of the parameter name.
+                param_prefixes = ["Sec", "RndCnst"]
+                cc_mod_name = c.Name.from_snake_case(mod_name).as_camel_case()
+                for prefix in param_prefixes:
+                    if par_name.lower().startswith(prefix.lower()):
+                        i["name_top"] = prefix + cc_mod_name + par_name[
+                            len(prefix):]
+                        break
+                else:
+                    i["name_top"] = cc_mod_name + par_name
 
-    # scan
-    if "scan" in ip:
-        ip_module["scan"] = ip["scan"]
-    else:
-        ip_module["scan"] = "false"
+                # Generate random bits or permutation, if needed
+                if i["randtype"] == "data":
+                    i["default"] = _get_random_data_hex_literal(i["randcount"])
+                    # Effective width of the random vector
+                    i["randwidth"] = int(i["randcount"])
+                elif i["randtype"] == "perm":
+                    i["default"] = _get_random_perm_hex_literal(i["randcount"])
+                    # Effective width of the random vector
+                    i["randwidth"] = int(i["randcount"]) * int(
+                        ceil(log2(float(i["randcount"]))))
+        else:
+            ip_module["param_list"] = []
 
-    # inter-module
-    if "inter_signal_list" in ip:
-        ip_module["inter_signal_list"] = ip["inter_signal_list"]
+        # interrupt_list
+        if "interrupt_list" in ip:
+            ip_module["interrupt_list"] = deepcopy(ip["interrupt_list"])
+            for i in ip_module["interrupt_list"]:
+                i.pop('desc', None)
+                i["type"] = "interrupt"
+                i["width"] = int(i["width"])
+        else:
+            ip_module["interrupt_list"] = []
 
-        # TODO: validate
+        # alert_list
+        if "alert_list" in ip:
+            ip_module["alert_list"] = deepcopy(ip["alert_list"])
+            for i in ip_module["alert_list"]:
+                i.pop('desc', None)
+                i["type"] = "alert"
+                i["width"] = int(i["width"])
+                # automatically insert asynchronous transition if necessary
+                if ip_module["clock_srcs"]["clk_i"] == \
+                   top["module"][ah_idx]["clock_srcs"]["clk_i"]:
+                    i["async"] = 0
+                else:
+                    i["async"] = 1
+        else:
+            ip_module["alert_list"] = []
+
+        # wkup_list
+        if "wakeup_list" in ip:
+            ip_module["wakeup_list"] = deepcopy(ip["wakeup_list"])
+            for i in ip_module["wakeup_list"]:
+                i.pop('desc', None)
+        else:
+            ip_module["wakeup_list"] = []
+
+        # reset request
+        if "reset_request_list" in ip:
+            ip_module["reset_request_list"] = deepcopy(
+                ip["reset_request_list"])
+            for i in ip_module["reset_request_list"]:
+                i.pop('desc', None)
+        else:
+            ip_module["reset_request_list"] = []
+
+        # scan
+        if "scan" in ip:
+            ip_module["scan"] = ip["scan"]
+        else:
+            ip_module["scan"] = "false"
+
+        # scan_reset
+        if "scan_reset" in ip:
+            ip_module["scan_reset"] = ip["scan_reset"]
+        else:
+            ip_module["scan_reset"] = "false"
+
+        # inter-module
+        if "inter_signal_list" in ip:
+            ip_module["inter_signal_list"] = deepcopy(ip["inter_signal_list"])
+
+            # TODO: validate
 
 
 # TODO: Replace this part to be configurable from Hjson or template
@@ -154,17 +252,18 @@ def xbar_addhost(top, xbar, host):
         log.warning(
             "host %s doesn't exist in the node list. Using default values" %
             host)
-        obj = {
-            "name": host,
-            "clock": xbar['clock'],
-            "reset": xbar['reset'],
-            "type": "host",
-            "inst_type": "",
+        obj = OrderedDict([
+            ("name", host),
+            ("clock", xbar['clock']),
+            ("reset", xbar['reset']),
+            ("type", "host"),
+            ("inst_type", ""),
+            ("stub", False),
             # The default matches RTL default
             # pipeline_byp is don't care if pipeline is false
-            "pipeline": "true",
-            "pipeline_byp": "true"
-        }
+            ("pipeline", "true"),
+            ("pipeline_byp", "true")
+        ])
         xbar["nodes"].append(obj)
         return
 
@@ -180,6 +279,7 @@ def xbar_addhost(top, xbar, host):
     if 'reset' not in obj[0]:
         obj[0]["reset"] = xbar["reset"]
 
+    obj[0]["stub"] = False
     obj[0]["inst_type"] = predefined_modules[
         host] if host in predefined_modules else ""
     obj[0]["pipeline"] = obj[0]["pipeline"] if "pipeline" in obj[0] else "true"
@@ -206,6 +306,8 @@ def xbar_adddevice(top, xbar, device):
     - base_addr: comes from module or memory, or assume rv_plic?
     - size_byte: comes from module or memory
     - xbar: bool, true if the device port is another xbar
+    - stub: There is no backing module / memory, instead a tlul port
+            is created and forwarded above the current hierarchy
     """
     deviceobj = list(
         filter(lambda node: node["name"] == device,
@@ -215,6 +317,8 @@ def xbar_adddevice(top, xbar, device):
     xbar_list = [x["name"] for x in top["xbar"] if x["name"] != xbar["name"]]
 
     # case 1: another xbar --> check in xbar list
+    log.info("Handling xbar device {}, devlen {}, nodelen {}".format(
+        device, len(deviceobj), len(nodeobj)))
     if device in xbar_list and len(nodeobj) == 0:
         log.error(
             "Another crossbar %s needs to be specified in the 'nodes' list" %
@@ -231,6 +335,7 @@ def xbar_adddevice(top, xbar, device):
                     device, xbar["name"]))
             assert len(nodeobj) == 1
             nodeobj[0]["xbar"] = True
+            nodeobj[0]["stub"] = False
             process_pipeline_var(nodeobj[0])
             return
 
@@ -251,9 +356,10 @@ def xbar_adddevice(top, xbar, device):
                             ("size_byte", "0x1000"),
                         ])],
                         "xbar": False,
-                        "pipeline" : "true",
-                        "pipeline_byp" : "true"
-                    }) # yapf: disable
+                        "stub": False,
+                        "pipeline": "true",
+                        "pipeline_byp": "true"
+                    })  # yapf: disable
                 else:
                     # Update if exists
                     node = nodeobj[0]
@@ -263,6 +369,7 @@ def xbar_adddevice(top, xbar, device):
                                      ("size_byte", "0x1000")])
                     ]
                     node["xbar"] = False
+                    node["stub"] = False
                     process_pipeline_var(node)
             else:
                 log.error("device %s shouldn't be host type" % device)
@@ -270,26 +377,48 @@ def xbar_adddevice(top, xbar, device):
         # case 3: not defined
         else:
             # Crossbar check
-            log.error(
-                "device %s doesn't exist in 'module', 'memory', or predefined"
-                % device)
+            if len(nodeobj) == 0:
+                log.error("""
+                    Device %s doesn't exist in 'module', 'memory', predefined,
+                    or as a node object
+                    """ % device)
+            else:
+                node = nodeobj[0]
+                node["xbar"] = False
+                required_keys = ["addr_range"]
+                if "stub" in node and node["stub"]:
+                    log.info("""
+                        Device %s definition is a stub and does not exist in
+                        'module', 'memory' or predefined
+                        """ % device)
+
+                    if all(key in required_keys for key in node.keys()):
+                        log.error(
+                            "{}, The xbar only node is missing fields, see {}".
+                            format(node['name'], required_keys))
+                    process_pipeline_var(node)
+                else:
+                    log.error("Device {} definition is not a stub!")
+
             return
 
     # Search object from module or memory
     elif len(nodeobj) == 0:
         # found in module or memory but node object doesn't exist.
         xbar["nodes"].append({
-            "name" : device,
-            "type" : "device",
-            "clock" : deviceobj[0]["clock"],
-            "reset" : deviceobj[0]["reset"],
-            "inst_type" : deviceobj[0]["type"],
-            "addr_range": [OrderedDict([("base_addr", deviceobj[0]["base_addr"]),
-                            ("size_byte", deviceobj[0]["size"])])],
-            "pipeline" : "true",
-            "pipeline_byp" : "true",
-            "xbar" : True if device in xbar_list else False
-        }) # yapf: disable
+            "name": device,
+            "type": "device",
+            "clock": deviceobj[0]["clock"],
+            "reset": deviceobj[0]["reset"],
+            "inst_type": deviceobj[0]["type"],
+            "addr_range": [OrderedDict([
+                ("base_addr", deviceobj[0]["base_addr"]),
+                ("size_byte", deviceobj[0]["size"])])],
+            "pipeline": "true",
+            "pipeline_byp": "true",
+            "xbar": True if device in xbar_list else False,
+            "stub": False
+        })  # yapf: disable
 
     else:
         # found and exist in the nodes too
@@ -300,6 +429,7 @@ def xbar_adddevice(top, xbar, device):
                          ("size_byte", deviceobj[0]["size"])])
         ]
         node["xbar"] = True if device in xbar_list else False
+        node["stub"] = False
         process_pipeline_var(node)
 
 
@@ -363,14 +493,14 @@ def xbar_cross(xbar, xbars):
     addr = []
     for node in [
             x for x in xbar["nodes"]
-            if x["type"] == "device" and "xbar" in x and x["xbar"] == False
+            if x["type"] == "device" and "xbar" in x and x["xbar"] is False
     ]:
         addr.extend(node["addr_range"])
 
     # Step 2: visit xbar device ports
     xbar_nodes = [
         x for x in xbar["nodes"]
-        if x["type"] == "device" and "xbar" in x and x["xbar"] == True
+        if x["type"] == "device" and "xbar" in x and x["xbar"] is True
     ]
 
     # Now call function to get the device range
@@ -402,8 +532,8 @@ def xbar_cross_node(node_name, device_xbar, xbars, visited=[]):
     for node in host_xbar["nodes"]:
         if not node["name"] in devices:
             continue
-        if "xbar" in node and node["xbar"] == True:
-            if not "addr_range" in node:
+        if "xbar" in node and node["xbar"] is True:
+            if "addr_range" not in node:
                 # Deeper dive into another crossbar
                 xbar_addr = xbar_cross_node(node["name"], host_xbar, xbars,
                                             visited)
@@ -416,13 +546,30 @@ def xbar_cross_node(node_name, device_xbar, xbars, visited=[]):
     return result
 
 
+# Check if the export field already exists
+# If yes, return it
+# If no, set a default and return that
+def check_clk_rst_export(module):
+    if 'clock_reset_export' not in module:
+        module['clock_reset_export'] = []
+    return module['clock_reset_export']
+
+
 def amend_clocks(top: OrderedDict):
     """Add a list of clocks to each clock group
        Amend the clock connections of each entry to reflect the actual gated clock
     """
     clks_attr = top['clocks']
+    clk_paths = clks_attr['hier_paths']
     groups_in_top = [x["name"].lower() for x in clks_attr['groups']]
+    exported_clks = OrderedDict()
+    trans_eps = []
 
+    # Assign default parameters to source clocks
+    for src in clks_attr['srcs']:
+        if 'derived' not in src:
+            src['derived'] = "no"
+            src['params'] = OrderedDict()
 
     # Default assignments
     for group in clks_attr['groups']:
@@ -432,16 +579,24 @@ def amend_clocks(top: OrderedDict):
             group['unique'] = "no"
 
         # if no hardwired clocks, define an empty set
-        group['clocks'] = OrderedDict() if 'clocks' not in group else group['clocks']
-
+        group['clocks'] = OrderedDict(
+        ) if 'clocks' not in group else group['clocks']
 
     for ep in top['module'] + top['memory'] + top['xbar']:
 
         clock_connections = OrderedDict()
 
+        # Ensure each module has a default case
+        export_if = check_clk_rst_export(ep)
+
         # if no clock group assigned, default is unique
-        ep['clock_group'] = 'secure' if 'clock_group' not in ep else ep['clock_group']
+        ep['clock_group'] = 'secure' if 'clock_group' not in ep else ep[
+            'clock_group']
         ep_grp = ep['clock_group']
+
+        # if ep is in the transactional group, collect into list below
+        if ep['clock_group'] == 'trans':
+            trans_eps.append(ep['name'])
 
         # end point names and clocks
         ep_name = ep['name']
@@ -453,58 +608,140 @@ def amend_clocks(top: OrderedDict):
         # unique property of each group
         unique = clks_attr['groups'][cg_idx]['unique']
 
+        # src property of each group
+        src = clks_attr['groups'][cg_idx]['src']
+
         for port, clk in ep['clock_srcs'].items():
             ep_clks.append(clk)
 
-            if unique == "yes":
+            name = ''
+            hier_name = clk_paths[src]
+
+            if src == 'ext':
+                # clock comes from top ports
+                if clk == 'main':
+                    name = "i"
+                else:
+                    name = "{}_i".format(clk)
+
+            elif unique == "yes":
                 # new unqiue clock name
-                clk_name = "clk_{}_{}".format(clk, ep_name)
+                name = "{}_{}".format(clk, ep_name)
 
             else:
                 # new group clock name
-                clk_name = "clk_{}_{}".format(clk, ep_grp)
+                name = "{}_{}".format(clk, ep_grp)
 
+            clk_name = "clk_" + name
 
             # add clock to a particular group
             clks_attr['groups'][cg_idx]['clocks'][clk_name] = clk
 
             # add clock connections
-            clock_connections[port] = clk_name
+            clock_connections[port] = hier_name + clk_name
+
+            # clocks for this module are exported
+            for intf in export_if:
+                log.info("{} export clock name is {}".format(ep_name, name))
+
+                # create dict entry if it does not exit
+                if intf not in exported_clks:
+                    exported_clks[intf] = OrderedDict()
+
+                # if first time encounter end point, declare
+                if ep_name not in exported_clks[intf]:
+                    exported_clks[intf][ep_name] = []
+
+                # append clocks
+                exported_clks[intf][ep_name].append(name)
 
         # Add to endpoint structure
         ep['clock_connections'] = clock_connections
 
+    # add entry to top level json
+    top['exported_clks'] = exported_clks
+
+    # add entry to inter_module automatically
+    for intf in top['exported_clks']:
+        top['inter_module']['external']['clkmgr.clocks_{}'.format(
+            intf)] = "clks_{}".format(intf)
+
+    # add to intermodule connections
+    for ep in trans_eps:
+        entry = ep + ".idle"
+        top['inter_module']['connect']['clkmgr.idle'].append(entry)
+
+
 def amend_resets(top):
-    """Add a path variable to reset declaration
+    """Generate exported reset structure and automatically connect to
+       intermodule.
     """
-    reset_paths = {}
+    # Generate exported reset list
+    exported_rsts = OrderedDict()
+    for module in top["module"]:
 
-    for reset in top["resets"]:
+        # This code is here to ensure if amend_clocks/resets switched order
+        # everything would still work
+        export_if = check_clk_rst_export(module)
 
+        # There may be multiple export interfaces
+        for intf in export_if:
+            # create dict entry if it does not exit
+            if intf not in exported_rsts:
+                exported_rsts[intf] = OrderedDict()
+
+            # grab directly from reset_connections definition
+            rsts = [rst for rst in module['reset_connections'].values()]
+            exported_rsts[intf][module['name']] = rsts
+
+    # add entry to top level json
+    top['exported_rsts'] = exported_rsts
+
+    # add entry to inter_module automatically
+    for intf in top['exported_rsts']:
+        top['inter_module']['external']['rstmgr.resets_{}'.format(
+            intf)] = "rsts_{}".format(intf)
+    """Discover the full path and selection to each reset connection.
+       This is done by modifying the reset connection of each end point.
+    """
+    for end_point in top['module'] + top['memory'] + top['xbar']:
+        for port, net in end_point['reset_connections'].items():
+            reset_path = lib.get_reset_path(net, end_point['domain'],
+                                            top['resets'])
+            end_point['reset_connections'][port] = reset_path
+
+    # reset paths are still needed temporarily until host only modules are properly automated
+    reset_paths = OrderedDict()
+    reset_hiers = top["resets"]['hier_paths']
+
+    for reset in top["resets"]["nodes"]:
         if "type" not in reset:
             log.error("{} missing type field".format(reset["name"]))
             return
 
-        if reset["type"] in ["gen"]:
-            # The resets structure will be used once rstmgr is integrated
-            # reset_paths[reset["name"]] = "resets.{}_rst_n".format(reset["name"])
-            reset_paths[reset["name"]] = "rstmgr_resets.rst_{}_n".format(reset["name"])
-        elif reset["type"] == "por":
-            reset_paths[reset["name"]] = "rst_ni"
+        if reset["type"] == "top":
+            reset_paths[reset["name"]] = "{}rst_{}_n".format(
+                reset_hiers["top"], reset["name"])
+
+        elif reset["type"] == "ext":
+            reset_paths[reset["name"]] = reset_hiers["ext"] + reset['name']
+        elif reset["type"] == "int":
+            log.info("{} used as internal reset".format(reset["name"]))
         else:
             log.error("{} type is invalid".format(reset["type"]))
 
     top["reset_paths"] = reset_paths
+
     return
 
 
 def amend_interrupt(top):
     """Check interrupt_module if exists, or just use all modules
     """
-    if not "interrupt_module" in top:
+    if "interrupt_module" not in top:
         top["interrupt_module"] = [x["name"] for x in top["module"]]
 
-    if not "interrupt" in top or top["interrupt"] == "":
+    if "interrupt" not in top or top["interrupt"] == "":
         top["interrupt"] = []
 
     for m in top["interrupt_module"]:
@@ -523,10 +760,10 @@ def amend_interrupt(top):
 def amend_alert(top):
     """Check interrupt_module if exists, or just use all modules
     """
-    if not "alert_module" in top:
+    if "alert_module" not in top:
         top["alert_module"] = [x["name"] for x in top["module"]]
 
-    if not "alert" in top or top["alert"] == "":
+    if "alert" not in top or top["alert"] == "":
         top["alert"] = []
 
     for m in top["alert_module"]:
@@ -542,12 +779,65 @@ def amend_alert(top):
                 ip[0]["alert_list"]))
 
 
+def amend_wkup(topcfg: OrderedDict):
+
+    if "wakeups" not in topcfg or topcfg["wakeups"] == "":
+        topcfg["wakeups"] = []
+
+    # create list of wakeup signals
+    for m in topcfg["module"]:
+        log.info("Adding wakeup from module %s" % m["name"])
+        for entry in m["wakeup_list"]:
+            log.info("Adding singal %s" % entry["name"])
+            signal = deepcopy(entry)
+            signal["module"] = m["name"]
+            topcfg["wakeups"].append(signal)
+
+    # add wakeup signals to pwrmgr connections
+    signal_names = [
+        "{}.{}".format(s["module"].lower(), s["name"].lower())
+        for s in topcfg["wakeups"]
+    ]
+    # TBD: What's the best way to not hardcode this signal below?
+    #      We could make this a top.hjson variable and validate it against pwrmgr hjson
+    topcfg["inter_module"]["connect"]["pwrmgr.wakeups"] = signal_names
+    log.info("Intermodule signals: {}".format(
+        topcfg["inter_module"]["connect"]))
+
+
+# Handle reset requests from modules
+def amend_reset_request(topcfg: OrderedDict):
+
+    if "reset_requests" not in topcfg or topcfg["reset_requests"] == "":
+        topcfg["reset_requests"] = []
+
+    # create list of reset signals
+    for m in topcfg["module"]:
+        log.info("Adding reset requests from module %s" % m["name"])
+        for entry in m["reset_request_list"]:
+            log.info("Adding singal %s" % entry["name"])
+            signal = deepcopy(entry)
+            signal["module"] = m["name"]
+            topcfg["reset_requests"].append(signal)
+
+    # add reset requests to pwrmgr connections
+    signal_names = [
+        "{}.{}".format(s["module"].lower(), s["name"].lower())
+        for s in topcfg["reset_requests"]
+    ]
+    # TBD: What's the best way to not hardcode this signal below?
+    #      We could make this a top.hjson variable and validate it against pwrmgr hjson
+    topcfg["inter_module"]["connect"]["pwrmgr.rstreqs"] = signal_names
+    log.info("Intermodule signals: {}".format(
+        topcfg["inter_module"]["connect"]))
+
+
 def amend_pinmux_io(top):
     """ Check dio_modules/ mio_modules. If not exists, add all modules to mio
     """
     pinmux = top["pinmux"]
 
-    if not "dio_modules" in pinmux:
+    if "dio_modules" not in pinmux:
         pinmux['dio_modules'] = []
 
     # list out dedicated IO
@@ -559,7 +849,11 @@ def amend_pinmux_io(top):
         # Parse how many signals
         m = lib.get_module_by_name(top, mname)
 
-        if sname != None:
+        if m is None:
+            raise SystemExit("Module {} in `dio_modules`"
+                             " is not searchable.".format(mname))
+
+        if sname is not None:
             signals = deepcopy([lib.get_signal_by_name(m, sname)])
         else:
             # Get all module signals
@@ -571,9 +865,10 @@ def amend_pinmux_io(top):
 
         # convert signal with module name
         signals = list(
-            map(partial(lib.add_module_prefix_to_signal, module=mname), signals))
+            map(partial(lib.add_module_prefix_to_signal, module=mname),
+                signals))
         # Parse how many pads are assigned
-        if not "pad" in e:
+        if "pad" not in e:
             raise SystemExit("Should catch pad field in validate.py!")
 
         # pads are the list of individual pin, each entry is 1 bit width
@@ -596,7 +891,7 @@ def amend_pinmux_io(top):
     dio_names = [p["name"] for p in pinmux["dio"]]
 
     # Multiplexer IO
-    if not "mio_modules" in pinmux:
+    if "mio_modules" not in pinmux:
         # Add all modules having available io to Multiplexer IO
         pinmux["mio_modules"] = []
 
@@ -611,11 +906,11 @@ def amend_pinmux_io(top):
     # List up the dedicated IO to exclude from inputs/outputs
 
     # Add port list to `inputs` and `outputs` fields
-    if not "inputs" in pinmux:
+    if "inputs" not in pinmux:
         pinmux["inputs"] = []
-    if not "outputs" in pinmux:
+    if "outputs" not in pinmux:
         pinmux["outputs"] = []
-    if not "inouts" in pinmux:
+    if "inouts" not in pinmux:
         pinmux["inouts"] = []
 
     for e in pinmux["mio_modules"]:
@@ -625,7 +920,7 @@ def amend_pinmux_io(top):
                 "Cannot parse signal/module in mio_modules {}".format(e))
         # Add all ports from the module to input/outputs
         m = lib.get_module_by_name(top, tokens[0])
-        if m == None:
+        if m is None:
             raise SystemExit("Module {} doesn't exist".format(tokens[0]))
 
         if len(tokens) == 1:
@@ -671,13 +966,11 @@ def merge_top(topcfg: OrderedDict, ipobjs: OrderedDict,
     # Assign clocks into appropriate groups
     # Note, amend_ip references clock information to establish async handling
     # as part of alerts.
-    amend_clocks(gencfg)
+    # amend_clocks(gencfg)
 
-    # Add path names to declared resets
-    amend_resets(gencfg)
-
-    # Inter-module signals
-    elab_intermodule(gencfg)
+    # Combine the wakeups
+    amend_wkup(gencfg)
+    amend_reset_request(gencfg)
 
     # Combine the interrupt (should be processed prior to xbar)
     amend_interrupt(gencfg)
@@ -696,6 +989,10 @@ def merge_top(topcfg: OrderedDict, ipobjs: OrderedDict,
     # 2nd phase of xbar (gathering the devices address range)
     for xbar in gencfg["xbar"]:
         xbar_cross(xbar, gencfg["xbar"])
+
+    # Add path names to declared resets.
+    # Declare structure for exported resets.
+    amend_resets(gencfg)
 
     # remove unwanted fields 'debug_mem_base_addr'
     gencfg.pop('debug_mem_base_addr', None)

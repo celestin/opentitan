@@ -10,7 +10,7 @@ class hmac_stress_all_vseq extends hmac_base_vseq;
   `uvm_object_new
 
   task body();
-    string seq_names[] = {"hmac_sanity_vseq",
+    string seq_names[] = {"hmac_smoke_vseq",
                           "hmac_back_pressure_vseq",
                           "hmac_burst_wr_vseq",
                           "hmac_common_vseq", // for intr_test
@@ -28,8 +28,8 @@ class hmac_stress_all_vseq extends hmac_base_vseq;
       `downcast(hmac_vseq, seq)
 
       // dut_init (reset) can be skipped
-      if (do_dut_init) hmac_vseq.do_dut_init = $urandom_range(0, 1);
-      else hmac_vseq.do_dut_init = 0;
+      if (do_apply_reset) hmac_vseq.do_apply_reset = $urandom_range(0, 1);
+      else hmac_vseq.do_apply_reset = 0;
 
       hmac_vseq.set_sequencer(p_sequencer);
       `DV_CHECK_RANDOMIZE_FATAL(hmac_vseq)

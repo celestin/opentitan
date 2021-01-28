@@ -7,3 +7,14 @@ git+https://github.com/lowRISC/edalize.git@ot
 
 # Development version with OT-specific changes
 git+https://github.com/lowRISC/fusesoc.git@ot
+
+pyyaml
+mako
+
+# Needed by dvsim.py (not actually used in Ibex)
+hjson
+mistletoe>=0.7.2
+premailer
+
+# Recurse to get any requirements from riscv-dv
+-r vendor/google_riscv-dv/requirements.txt

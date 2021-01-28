@@ -123,7 +123,7 @@ Supported CSR test sequences are:
    the read results with the expected values
 
 ### CSR exclusion methodology
-The CSR test sequences listed above intend to perform a sanity check to CSR
+The CSR test sequences listed above intend to perform a basic check to CSR
 read/write accesses, but do not intend to check specific DUT functionalities. Thus the
 sequences might need to exclude reading or writing certain CSRs depending on the
 specific testbench.
@@ -140,7 +140,7 @@ Examples of useful functions in this class are:
       CsrExclWriteCheck = 3'b010, // exclude csr from write-read check
       CsrExclCheck      = 3'b011, // exclude csr from init or write-read check
       CsrExclWrite      = 3'b100, // exclude csr from write
-      CsrExclAll        = 3'b111  // exclude csr from init or write or writ-read check
+      CsrExclAll        = 3'b111  // exclude csr from init or write or write-read check
     } csr_excl_type_e;
     ```
 

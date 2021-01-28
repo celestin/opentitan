@@ -6,8 +6,12 @@ Register JSON validation
 """
 
 import logging as log
+import operator
+import re
+from collections import OrderedDict
+from copy import deepcopy
 
-from reggen.field_enums import SwWrAccess, SwRdAccess, SwAccess, HwAccess
+from reggen.field_enums import HwAccess, SwAccess, SwRdAccess, SwWrAccess
 
 
 # Routine that can be used for Hjson object_pairs_hook
@@ -29,11 +33,8 @@ def checking_dict(pairs):
 def check_count(top, mreg, err_prefix):
     '''Checking mreg count if it is in param list
     '''
-    if "param_list" not in top:
-        top["param_list"] = []
-        name_list = []
-    else:
-        name_list = [z["name"] for z in top["param_list"]]
+    top.setdefault('param_list', [])
+    name_list = [z["name"] for z in top["param_list"]]
 
     try:
         index = name_list.index(mreg["count"])
@@ -52,9 +53,13 @@ def check_count(top, mreg, err_prefix):
             "type": "int",
             "default": mcount,
             "desc": "auto added parameter",
-            "local": "true"
+            "local": "true",
+            "expose": "false",
+            "randtype": "none",
+            "randcount": "0",
+            "randwidth": "0"
         })
-        log.info("Parameter {} is added".format(mreg["name"]))
+        log.debug("Parameter {} is added".format(mreg["name"]))
         # Replace count integer to parameter
         mreg["count"] = mreg["name"]
 
@@ -138,17 +143,69 @@ def check_lp(obj, x, err_prefix):
     for y in obj[x]:
         error += check_keys(y, lp_required, lp_optional, {},
                             err_prefix + ' element ' + x)
-        # TODO: Check if PascalCase or ALL_CAPS
-        if "type" not in y:
-            y["type"] = "int"
 
-        if "local" in y:
-            local, ierr = check_bool(y["local"], err_prefix + " local")
-            if ierr:
-                error += 1
-                y["local"] = "true"
-        else:
+        # If this is a random netlist constant, other attributes like local, default and expose
+        # are automatically set. Throw an error if they already exist in the dict.
+        randcount = int(y.setdefault('randcount', "0"))
+        randtype = y.setdefault('randtype', "none")
+        if randtype != "none":
+
+            if randcount <= 0:
+                log.error(err_prefix + ' randwith for parameter ' + y['name'] +
+                          ' must be greater > 0.')
+                return error + 1
+
+            if randtype not in ['perm', 'data']:
+                log.error(err_prefix + ' parameter ' + y['name'] +
+                          ' has unknown randtype ' + randtype)
+                return error + 1
+
+            if y.get('type') is None:
+                log.error(
+                    err_prefix + ' parameter ' + y['name'] +
+                    ' has undefined type. '
+                    'It is required to define the type in the IP package.')
+                return error + 1
+
+            if not y.get('name').lower().startswith('rndcnst'):
+                log.error(
+                    err_prefix + ' parameter ' + y['name'] +
+                    ' is defined as a compile-time '
+                    'random netlist constant. The name must therefore start with RndCnst.'
+                )
+                return error + 1
+
+            overrides = [('local', 'false'), ('default', ''),
+                         ('expose', 'false')]
+
+            for key, value in overrides:
+                if y.setdefault(key, value) != value:
+                    log.error(
+                        err_prefix + ' ' + key + ' for parameter ' +
+                        y['name'] +
+                        ' must not be set since it will be defined automatically.'
+                    )
+                    return error + 1
+
+        # TODO: Check if PascalCase or ALL_CAPS
+        y.setdefault('type', 'int')
+
+        y.setdefault('local', 'true')
+        local, ierr = check_bool(y["local"], err_prefix + " local")
+        if ierr:
+            error += 1
             y["local"] = "true"
+
+        y.setdefault('expose', 'false')
+        local, ierr = check_bool(y["expose"], err_prefix + " expose")
+        if ierr:
+            error += 1
+            y["expose"] = "false"
+
+        if y["local"] == "true" and y["expose"] == "true":
+            log.error(err_prefix + ' element ' + x + '["' + y["name"] + '"]' +
+                      ' cannot be local and exposed to top level')
+            return error + 1
 
         if "default" in y:
             if y["type"][:3] == "int":
@@ -157,14 +214,19 @@ def check_lp(obj, x, err_prefix):
                 if ierr:
                     error += 1
                     y["default"] = "1"
-        else:
-            if y["type"][:3] == "int":
+        elif y["randtype"] != "none":
+            # Don't make assumptions for exposed parameters. These must have
+            # a default.
+            if y["expose"] == "true":
+                log.error(err_prefix + ' element ' + x + '["' + y["name"] +
+                          '"]' + ' has no defined default value')
+            elif y["type"][:3] == "int":
                 y["default"] = "1"
             elif y["type"] == "string":
                 y["default"] = ""
             else:
-                log.err(err_prefix + ' element ' + x + '["' + y["name"] +
-                        '"]' + ' type is not supported')
+                log.error(err_prefix + ' element ' + x + '["' + y["name"] +
+                          '"]' + ' type is not supported')
                 return error + 1
 
     return error
@@ -188,17 +250,18 @@ def check_keys(obj, required_keys, optional_keys, added_keys, err_prefix):
             error += 1
             log.error(err_prefix + " missing required key " + x)
     for x in obj:
-        type = ''
+        type = None
         if x in required_keys:
             type = required_keys[x][0]
         elif x in optional_keys:
             type = optional_keys[x][0]
         elif x not in added_keys:
             log.warning(err_prefix + " contains extra key " + x)
-        if type[:2] == 'ln':
-            error += check_ln(obj, x, type == 'lnw', err_prefix)
-        if type == 'lp':
-            error += check_lp(obj, x, err_prefix)
+        if type is not None:
+            if type[:2] == 'ln':
+                error += check_ln(obj, x, type == 'lnw', err_prefix)
+            if type == 'lp':
+                error += check_lp(obj, x, err_prefix)
 
     return error
 
@@ -300,27 +363,41 @@ top_required = {
      "offset control groups"]
 }
 top_optional = {
+    'reset_primary': ['s', "primary reset used by the module"],
+    'other_reset_list': ['l', "list of other resets"],
     'bus_host': ['s', "name of the bus interface as host"],
     'other_clock_list': ['l', "list of other chip clocks needed"],
     'available_input_list': ['lnw', "list of available peripheral inputs"],
     'available_output_list': ['lnw', "list of available peripheral outputs"],
     'available_inout_list': ['lnw', "list of available peripheral inouts"],
     'interrupt_list': ['lnw', "list of peripheral interrupts"],
+    'inter_signal_list': ['l', "list of inter-module signals"],
     'no_auto_intr_regs': [
         's', "Set to true to suppress automatic "
         "generation of interrupt registers. "
-        "Defaults to false if not present."
+        "Defaults to true if no interrupt_list is present. "
+        "Otherwise this defaults to false. "
     ],
     'alert_list': ['lnw', "list of peripheral alerts"],
+    'no_auto_alert_regs': [
+        's', "Set to true to suppress automatic "
+        "generation of alert test registers. "
+        "Defaults to true if no alert_list is present. "
+        "Otherwise this defaults to false. "
+    ],
+    'wakeup_list': ['lnw', "list of peripheral wakeups"],
     'regwidth': ['d', "width of registers in bits (default 32)"],
     'param_list': ['lp', "list of parameters of the IP"],
     'scan': ['pb', 'Indicates the module have `scanmode_i`'],
+    'scan_reset': ['pb', 'Indicates the module have `test_rst_ni`'],
     'SPDX-License-Identifier': [
         's', "License ientifier (if using pure json) "
         "Only use this if unable to put this "
         "information in a comment at the top of the "
         "file."
-    ]
+    ],
+    'hier_path':
+    [None, 'additional hierarchy path before the reg block instance']
 }
 top_added = {
     'genrnames': ['pl', "list of register names"],
@@ -352,6 +429,10 @@ lp_optional = {
     'type': ['s', "item type. int by default"],
     'default': ['s', "item default value"],
     'local': ['pb', "to be localparam"],
+    'expose': ['pb', "to be exposed to top"],
+    'randcount':
+    ['s', "number of bits to randomize in the parameter. 0 by default."],
+    'randtype': ['s', "type of randomization to perform. none by default"],
 }
 
 # Registers list may have embedded keys
@@ -407,6 +488,13 @@ reg_optional = {
     'tags': [
         's',
         "tags for the register, followed by the format 'tag_name:item1:item2...'"
+    ],
+    'shadowed': ['s', "'true' if the register is shadowed"],
+    'update_err_alert': ['s', "alert that will be triggered if " +
+                         "this shadowed register has update error"
+    ],
+    'storage_err_alert': ['s', "alert that will be triggered if " +
+                          "this shadowed register has storage error"
     ]
 }
 reg_added = {
@@ -485,10 +573,13 @@ multireg_required = {
 }
 multireg_optional = reg_optional
 multireg_optional.update({
-    'regwen_incr': [
-        's', "If true, regwen term increments"
+    'regwen_multi': [
+        'pb', "If true, regwen term increments"
         " along with current multireg count."
     ],
+    'compact':
+    ['pb', "If true, allow multireg compacting."
+     "If false, do not compact."],
 })
 
 multireg_added = {
@@ -634,27 +725,73 @@ def resolve_value(entry, param_list):
         val = param['default']
         if param['local'] != "true":
             log.warning(
-                "It is recommended to define {} as localparam," +
+                "It is recommended to define {} as localparam,"
                 " since it should not be changed in the design".format(entry))
 
     return int(val), err
 
 
-# only supports subtractions right now
-def resolve_bitfield(entry, param_list):
-    lead_term = True
+# resolve expression
+def resolve_expression(entry, ops, param_list):
+    log.debug("Evaluating entry {}".format(entry))
+
     val = 0
     error = 0
-    terms = entry.replace(" ", "").split('-')
 
-    for i in terms:
-        if lead_term:
-            lead_term = False
-            val, err = resolve_value(i, param_list)
+    # construct the pattern to search
+    operators = ''
+    for op in ops.keys():
+        operators += str(op)
+
+    pattern = '([{}])'.format(operators)
+
+    terms = re.split(pattern, entry)
+    log.debug("Separate terms: {}".format(terms))
+
+    pending_op = ''
+
+    # When an operation is encountered, save its operation in pending op.
+    # On the next item, it is assumed to be a value and then the operation is
+    # performed.
+    for term in terms:
+        log.debug("Operating on {}".format(term))
+        if term in ops.keys():
+            pending_op = term
         else:
-            tmp, err = resolve_value(i, param_list)
-            val -= tmp
+            op_val, err = resolve_value(term, param_list)
+            if pending_op:
+                log.debug("Pending operation")
+                val = ops[pending_op](val, op_val)
+                pending_op = ''
+            else:
+                log.debug("No pending operation")
+                val = op_val
+
         error += err
+
+    log.debug("Final resolved value is {}".format(val))
+    return int(val), error
+
+
+# Supports addition / subtraction in bitfield calculation
+def resolve_bitfield(entry, param_list):
+    log.debug("Resolving bitfield {}".format(entry))
+    val = 0
+    error = 0
+    ops = {"+": operator.add, "-": operator.sub}
+    entry = entry.replace(" ", "")
+    expression = re.search('[+-]', entry)
+
+    # The field is an expression
+    if expression:
+        log.debug("It is an expression!")
+        val, err = resolve_expression(entry, ops, param_list)
+    else:
+        log.debug("It is not an expression!")
+        val, err = resolve_value(entry, param_list)
+
+    error += err
+
     # convert back to string
     return str(val), error
 
@@ -707,10 +844,10 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
         if 'swaccess' not in field:
             if default_sw is None:
                 error += 1
-                log.error(fname + ":no swaccess or register default swaccess")
+                log.error(fname + ": no swaccess or register default swaccess")
                 swaccess = "wo"
             else:
-                log.info(fname + ": use register default swaccess")
+                log.debug(fname + ": use register default swaccess")
                 field['swaccess'] = default_sw
                 swaccess = default_sw
         else:
@@ -730,7 +867,7 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
                 log.error(fname + ": no hwaccess or register default hwaccess")
                 hwaccess = "hro"
             else:
-                log.info(fname + ": use register default hwaccess")
+                log.debug(fname + ": use register default hwaccess")
                 field['hwaccess'] = default_hw
                 hwaccess = default_hw
         else:
@@ -757,14 +894,16 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
             error += err
             field['bits'] = msb_range + ':' + lsb_range
 
-        field_bits = bitmask(field['bits'])
-        if (field_bits[0] == 0):
+        field_bitinfo = bitmask(field['bits'])
+        field_mask, field_width, field_lsb = field_bitinfo
+        field_msb = field_lsb + field_width - 1
+        max_in_field = (1 << field_width) - 1
+
+        if (field_mask == 0):
             error += 1
         else:
-            reuse_check = bits_used & field_bits[0]
-            # > is correct here because the check is of the bit
-            # above the msb. The equal case is thus valid
-            if ((field_bits[1] + field_bits[2]) > width):
+            reuse_check = bits_used & field_mask
+            if field_msb >= width:
                 error += 1
                 log.error(fname + ": Register not wide enough for bits: " +
                           field['bits'])
@@ -772,9 +911,8 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
                 error += 1
                 log.error(fname + ": Defines already defined bits " +
                           hex(reuse_check))
-            bits_used |= field_bits[0]
-            field['bitinfo'] = field_bits
-        max_in_field = (1 << field_bits[1]) - 1
+            bits_used |= field_mask
+            field['bitinfo'] = field_bitinfo
 
         if 'resval' in field:
             if field['resval'] != "x":
@@ -789,14 +927,13 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
                     resval &= max_in_field
 
                 if (full_resval is not None and
-                    (resval !=
-                     ((full_resval >> field_bits[2]) & max_in_field))):
+                   (resval != ((full_resval >> field_lsb) & max_in_field))):
                     error += 1
                     log.error(fname + ": Field resval " + field['resval'] +
                               " differs from value in main register resval " +
                               hex(full_resval))
-                gen_resval |= resval << field_bits[2]
-                gen_resmask |= field_bits[0]
+                gen_resval |= resval << field_lsb
+                gen_resmask |= field_mask
                 field['genresval'] = resval
                 field['genresvalx'] = False
             else:
@@ -804,29 +941,26 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
                 field['genresvalx'] = True
         else:
             if full_resval is not None:
-                resval = (full_resval >> field_bits[2]) & max_in_field
-                gen_resval |= resval << field_bits[2]
-                gen_resmask |= field_bits[0]
+                resval = (full_resval >> field_lsb) & max_in_field
+                gen_resval |= resval << field_lsb
+                gen_resmask |= field_mask
                 field['genresval'] = resval
                 field['genresvalx'] = False
-                log.info(fname + ": use register default genresval")
+                log.debug(fname + ": use register default genresval")
             else:
                 if swaccess[0] != 'w':
                     field['genresval'] = 0
                     field['genresvalx'] = False
-                    log.info(fname + ": use zero genresval")
-                    gen_resmask |= field_bits[0]
+                    log.debug(fname + ": use zero genresval")
+                    gen_resmask |= field_mask
                 else:
                     field['genresval'] = 0
                     field['genresvalx'] = True
-                    log.info(fname + ": use x genresval")
+                    log.debug(fname + ": use x genresval")
 
         if 'enum' in field:
-            if max_in_field > 127:
-                log.warning(fname + "enum too big for checking.")
-                enum_mask = 0
-            else:
-                enum_mask = (1 << (max_in_field + 1)) - 1
+            # Warn if the elements of the enumeration are not distinct
+            enum_val_names = {}
             for enum in field['enum']:
                 eck_err = check_keys(enum, enum_required, [], [],
                                      fname + " enum")
@@ -837,20 +971,28 @@ def validate_fields(fields, rname, default_sw, default_hw, full_resval,
                 val, ierr = check_int(enum['value'], fname + "." + ename)
                 if ierr:
                     error += 1
-                if (val > max_in_field):
+                    continue
+
+                if val > max_in_field:
                     error += 1
                     log.error(fname + ": enum value " + str(val) + "too big")
-                elif max_in_field <= 127:
-                    valbit = 1 << val
-                    if ((enum_mask & valbit) == 0):
-                        log.warning(fname + "enum has multiple " + str(val))
-                    else:
-                        enum_mask ^= valbit
+                    continue
 
-            if (enum_mask != 0):
+                old_name = enum_val_names.get(val)
+                if old_name is not None:
+                    log.warning(
+                        '{}: both {!r} and {!r} have enum value {}.'.format(
+                            fname, old_name, ename, val))
+                enum_val_names[val] = ename
+
+            # Check whether every possible bit pattern has a named enum value,
+            # setting the 'genrsvdenum' flag if not.
+            assert len(enum_val_names) <= max_in_field + 1
+            if len(enum_val_names) < max_in_field + 1:
                 field['genrsvdenum'] = True
-                log.info(fname + ": Enum values not complete. Mask " +
-                         hex(enum_mask))
+                log.debug('{}: Enum values not complete '
+                          '({} of {} values named).'.format(
+                              fname, len(enum_val_names), max_in_field + 1))
 
     return error, gen_resval, gen_resmask, bits_used
 
@@ -946,6 +1088,34 @@ def validate_reg_defaults(reg, rname):
     else:
         full_resval = None
 
+    if 'shadowed' in reg:
+        shadowed, ierr = check_bool(reg['shadowed'], rname + " shadowed")
+
+        if ierr:
+            error += 1
+            reg['shadowed'] = "false"
+        elif shadowed is True and not rname.lower().endswith('_shadowed'):
+            log.warning(
+                rname +
+                ": no \"_shadowed/_SHADOWED\" suffix for register declared as shadowed. "
+                "Changing it to false.")
+            reg['shadowed'] = "false"
+        elif shadowed is False and rname.lower().endswith('_shadowed'):
+            log.warning(
+                rname +
+                ": shadowed must be true for registers with \"_shadowed/_SHADOWED\" suffix. "
+                "Changing it to true.")
+            reg['shadowed'] = "true"
+    else:
+        if rname.lower().endswith('_shadowed'):
+            log.warning(
+                rname +
+                ": shadowed not provided but must be true for registers with "
+                "\"_shadowed/_SHADOWED\" suffix. Setting it to true.")
+            reg['shadowed'] = "true"
+        else:
+            reg['shadowed'] = "false"
+
     return error, default_sw, default_hw, full_resval
 
 
@@ -975,8 +1145,8 @@ def validate_register(reg, offset, width, top):
 
     # if there was an error before this then can't trust anything!
     if error > 0:
-        log.info(rname + "@" + hex(offset) + " " + str(error) +
-                 " top level errors. Not processing fields")
+        log.debug(rname + "@" + hex(offset) + " " + str(error) +
+                  " top level errors. Not processing fields")
         return error
 
     gen = validate_fields(reg['fields'], rname, default_sw, default_hw,
@@ -995,10 +1165,18 @@ def validate_register(reg, offset, width, top):
     if ((reg['regwen'] != '') and (not reg['regwen'] in top['genwennames'])):
         top['genwennames'].append(reg['regwen'])
 
-    log.info(rname + "@" + hex(offset) + " " + str(error) + " errors. Mask " +
-             hex(gen[3]))
+    log.debug(rname + "@" + hex(offset) + " " + str(error) + " errors. Mask " +
+              hex(gen[3]))
 
     return error
+
+
+# simplify the descriptions and enums for non-first entries in multireg
+def _multi_simplify(field, cname, idx):
+    # description and enum already showed once, skip
+    if idx > 0:
+        field.pop('enum', None)
+        field['desc'] = "For {}{}".format(cname, idx)
 
 
 def validate_multi(mreg, offset, addrsep, width, top):
@@ -1010,27 +1188,27 @@ def validate_multi(mreg, offset, addrsep, width, top):
         mreg["name"] = "MREG_" + hex(offset)
     else:
         mrname = mreg['name']
+
+    # multireg defaults
+    # Should probably create this structure somewhere else as part checking,
+    # then directly create the default value
+    defaults = {'regwen_multi': False, 'compact': True}
+    for entry in defaults:
+        mreg.setdefault(entry, defaults[entry])
+
     error = check_keys(mreg, multireg_required, multireg_optional,
                        multireg_added, mrname)
     derr, default_sw, default_hw, full_resval = validate_reg_defaults(
         mreg, mrname)
     error += derr
 
-    # multireg specific default validation
-    regwen_incr = False
-    if 'regwen_incr' not in mreg or 'regwen' not in mreg:
-        mreg['regwen_incr'] = 'false'
-    else:
-        regwen_incr, derr = check_bool(mreg['regwen_incr'],
-                                       mrname + " multireg increment")
-        error += derr
-
     # if there was an error before this then can't trust anything!
     if error > 0:
-        log.info(mrname + "@" + hex(offset) + " " + str(error) +
-                 " top level errors. Not processing fields")
+        log.debug(mrname + "@" + hex(offset) + " " + str(error) +
+                  " top level errors. Not processing fields")
         return error
 
+    # should add an option to include a register directly instead of a field
     gen = validate_fields(mreg['fields'], mrname, default_sw, default_hw,
                           full_resval, mreg['hwqe'] == "true",
                           mreg['hwre'] == "true", width, top)
@@ -1043,124 +1221,133 @@ def validate_multi(mreg, offset, addrsep, width, top):
     if ierr:
         error += 1
 
+    # Check if shadowed and determine index to keep _shadowed as suffix
+    shadowed, ierr = check_bool(mreg['shadowed'], mrname + " shadowed")
+    if ierr:
+        error += 1
+    if shadowed is True:
+        idx = mrname.lower().find('_shadowed')
+
     if error > 0:
         return (error, 0)
 
-    bused = gen[3]
-    max_rval = (1 << width) - 1
+    # multireg attributes
     cname = mreg['cname']
-    bpos = 0
-    inum = 0
+    template_reg = OrderedDict([
+        ('name', mrname + "{}"),
+        ('desc', mreg['desc']),
+        ('hwext', mreg['hwext']),
+        ('hwqe', mreg['hwqe']),
+        ('hwre', mreg['hwre']),
+        ('swaccess', mreg['swaccess']),
+        ('hwaccess', mreg['hwaccess']),
+        ('shadowed', mreg['shadowed']),
+        ('compact', mreg['compact']),
+        ('fields', []),
+    ])
+
+    template_reg['tags'] = mreg['tags'] if 'tags' in mreg else []
+    template_reg['regwen'] = mreg['regwen'] if 'regwen' in mreg else []
+    template_reg['regwen_multi'] = False if mcount == 1 else mreg['regwen_multi']
+
+    # msb of the field bitmask
+    # Should probably consider making the validate_field return a class so that we do not
+    # hardcode a selection like this
+    field_bitmask = gen[3]
+    field_msb = 0
+    for pos in range(width - 1, 0, -1):
+        if (field_bitmask & (1 << pos)):
+            field_msb = pos
+            break
+
+    # number of bits needed
+    bits_used = field_msb + 1
+
+    # Number of fields
+    num_fields = len(mreg['fields'])
+
+    # Maximum number of fields per reg
+    max_fields_per_reg = 1 if num_fields > 1 else min(mcount,
+                                                      int(width / bits_used))
+
+    # list of created registers
     rlist = []
+
+    # rnum represents which register we are currently working on.
+    # idx represents which index in the mcount we are working on.
+    # These two are not the same due to the compacting feature.
+    # Compacting happens under the following conditions:
+    # - There is only 1 field type for a multi-reg and compact is not set to
+    #   false.
     rnum = 0
-    while inum < mcount:
-        closereg = False
-        if bpos == 0:
-            genreg = {}
-            genreg['name'] = mrname + str(rnum)
-            genreg['desc'] = mreg['desc']
-            genreg['hwext'] = mreg['hwext']
-            genreg['hwqe'] = mreg['hwqe']
-            genreg['hwre'] = mreg['hwre']
-            genreg['swaccess'] = default_sw
-            genreg['hwaccess'] = default_hw
-            if 'tags' in mreg:
-                genreg['tags'] = mreg['tags']
-            else:
-                genreg['tags'] = []
+    idx = 0
 
-            if regwen_incr:
-                genreg['regwen'] = mreg['regwen'] + str(rnum)
-            else:
-                genreg['regwen'] = mreg['regwen']
+    # will fields be compacted?
+    is_compact = num_fields == 1 and template_reg['compact']
 
-            resval = 0
-            resmask = 0
-            bits_used = 0
-            genfields = []
+    # will there be multiple registers?
+    is_mult = (mcount > max_fields_per_reg) or (not is_compact and mcount > 1)
 
-        while bpos < width:
-            # bused is a bit mask of how many bits the fields need
-            # bpos is the current LSB of the bits allocated for the fields
-            trypos = bused << bpos
+    log.debug("Multireg attributes 0x{:x} {} {} {}".format(
+        field_bitmask, bits_used, num_fields, max_fields_per_reg))
+    while idx < mcount:
 
-            # if register can no longer contain another homogenous field
-            # if the field is not homogenous and has been allocated
-            # Currently we only compact if field is homogenous
-            if (trypos > max_rval) or (bpos != 0 and len(mreg['fields']) > 1):
-                bpos = width
-                break
-            # if bits have not been used, break and allocate
-            if (trypos & bits_used) == 0:
-                break
-            bpos += 1
+        genreg = deepcopy(template_reg)
 
-        if bpos < width:
-            # found a spot
-            for fn in mreg['fields']:
-                newf = fn.copy()
-                newf['name'] += str(inum)
-                if bpos != 0:
-                    newf['bits'] = bitfield_add(newf['bits'], bpos)
-                    newf['desc'] = 'for ' + cname + str(inum)
-                    newf['bitinfo'] = (newf['bitinfo'][0] << bpos,
-                                       newf['bitinfo'][1],
-                                       newf['bitinfo'][2] + bpos)
-                    if 'tags' not in fn:
-                        newf['tags'] = []
-                    if 'enum' in newf:
-                        del newf['enum']
-                else:
-                    newf['desc'] += ' for ' + cname + str(inum)
-                genfields.append(newf)
-            bits_used = bits_used | bused << bpos
-            resval = resval | gen[1] << bpos
-            resmask = resmask | gen[2] << bpos
-            bpos += 1
-            inum += 1
-            if inum == mcount:
-                closereg = True
+        # name the register
+        # if everything fits into 1 reg, do not add numbered suffix.
+        # if shadowed, add shadowed suffix.
+        name = "_" + str(rnum) if is_mult else ""
+        name += "_shadowed" if shadowed else ""
+        genreg['name'] = genreg['name'].format(name)
+
+        if (is_compact):
+            # Compact the minimum of remaining fields, or the max number of fields
+            # we are able to compact into a register.
+            for fnum in range(0, min(mcount - idx, max_fields_per_reg)):
+                new_field = deepcopy(mreg['fields'][0])
+                new_field['name'] += "_" + str(idx)
+                new_field['bits'] = bitfield_add(new_field['bits'],
+                                                 fnum * bits_used)
+                _multi_simplify(new_field, cname, idx)
+                genreg['fields'].append(new_field)
+                idx += 1
         else:
-            # need new register
-            closereg = True
+            genreg['fields'] = deepcopy(mreg['fields'])
+            # This is here to ensure no deltas with previous code.
+            # This is not needed if on separate registers we do not enforce suffix
+            for f in genreg['fields']:
+                f['name'] += "_" + str(idx)
+                _multi_simplify(f, cname, idx)
+            idx += 1
 
-        if closereg:
-            genreg['fields'] = genfields
-            genreg['genbasebits'] = bused
-            genreg['genresval'] = resval
-            genreg['genresmask'] = resmask
-            error += validate_register(genreg, offset + (rnum * addrsep),
-                                       width, top)
-            if error:
-                return (error, 0)
-            rnum += 1
-            bpos = 0
-            rlist.append(genreg)
-    # there is only one entry, so the index is unnecessary.  Pop and re-assign names
-    # associated with the index
-    if len(rlist) == 1:
-        if regwen_incr:
-            error += 1
-            log.error(
-                "%s multireg has only 1 register entry with regwen_incr set to true"
-                % mrname)
-        # TODO really should make the following a function that reverses the last node inserted
-        # may have more properties than just genrnames in the future
-        rlist[0]['name'] = mrname
-        rlist[0]['regwen'] = mreg['regwen']
-        top['genrnames'].pop()
+        # if regwen_multi is used, each register uses a different regen
+        if (genreg['regwen'] and genreg['regwen_multi']):
+            genreg['regwen'] += "_{}".format(rnum)
+
+        # validate register
+        validate_register(genreg, offset + (rnum * addrsep), width, top)
+        rnum += 1
+
+        # append to register list
+        rlist.append(genreg)
+
     mreg['genregs'] = rlist
-    top['genrnames'].append(mrname.lower())
     return error, rnum
 
 
-def make_intr_reg(regs, name, offset, swaccess, hwaccess, desc):
-    intrs = regs['interrupt_list']
+def make_intr_alert_reg(regs, name, offset, swaccess, hwaccess, desc):
+    if name == 'ALERT_TEST':
+        signal_list = regs['alert_list']
+    else:
+        signal_list = regs['interrupt_list']
+    # these names will be converted into test registers
+    testreg_names = ['INTR_TEST', 'ALERT_TEST']
     genreg = {}
     genreg['name'] = name
     genreg['desc'] = desc
-    genreg['hwext'] = 'true' if name == 'INTR_TEST' else 'false'
-    genreg['hwqe'] = 'true' if name == 'INTR_TEST' else 'false'
+    genreg['hwext'] = 'true' if name in testreg_names else 'false'
+    genreg['hwqe'] = 'true' if name in testreg_names else 'false'
     genreg['hwre'] = 'false'
     # Add tags.
     if name == 'INTR_TEST':
@@ -1171,10 +1358,11 @@ def make_intr_reg(regs, name, offset, swaccess, hwaccess, desc):
         genreg['tags'] = ["excl:CsrNonInitTests:CsrExclWriteCheck"]
     else:
         genreg['tags'] = []
+    genreg['shadowed'] = 'false'
     bits_used = 0
     genfields = []
     cur_bit = 0
-    for (field_idx, bit) in enumerate(intrs):
+    for (field_idx, bit) in enumerate(signal_list):
         newf = {}
         newf['name'] = bit['name']
         w = 1
@@ -1189,8 +1377,8 @@ def make_intr_reg(regs, name, offset, swaccess, hwaccess, desc):
         # Put the automatically generated information back into
         # `interrupt_list`, so that it can be used to generate C preprocessor
         # definitions if needed.
-        intrs[field_idx]['bits'] = newf['bits']
-        intrs[field_idx]['bitinfo'] = newf['bitinfo']
+        signal_list[field_idx]['bits'] = newf['bits']
+        signal_list[field_idx]['bitinfo'] = newf['bitinfo']
 
         if name == 'INTR_ENABLE':
             newf['desc'] = 'Enable interrupt when ' + \
@@ -1200,6 +1388,8 @@ def make_intr_reg(regs, name, offset, swaccess, hwaccess, desc):
             newf['desc'] = 'Write 1 to force ' + \
                            ('corresponding bit in ' if w > 1 else '') + \
                            '!!INTR_STATE.' + newf['name'] + ' to 1'
+        elif name == 'ALERT_TEST':
+            newf['desc'] = 'Write 1 to trigger one alert event of this kind.'
         else:
             newf['desc'] = bit['desc']
         newf['swaccess'] = swaccess
@@ -1210,7 +1400,7 @@ def make_intr_reg(regs, name, offset, swaccess, hwaccess, desc):
         newf['hwaccess'] = hwaccess
         hwacc_info = hwaccess_permitted[hwaccess]
         newf['genhwaccess'] = hwacc_info[1]
-        newf['genhwqe'] = True if name == 'INTR_TEST' else False
+        newf['genhwqe'] = True if name in testreg_names else False
         newf['genhwre'] = False
         newf['genresval'] = 0
         newf['genresvalx'] = False
@@ -1237,21 +1427,35 @@ def make_intr_reg(regs, name, offset, swaccess, hwaccess, desc):
 def make_intr_regs(regs, offset, addrsep, fullwidth):
     iregs = []
     intrs = regs['interrupt_list']
-    if sum([int(x['width'], 0) if 'width' in x else 1
-            for x in intrs]) > fullwidth:
+    num_intrs = sum([int(x.get('width', '1'), 0) for x in intrs])
+    if num_intrs > fullwidth:
         log.error('More than ' + str(fullwidth) + ' interrupts in list')
         return iregs, 1
 
-    iregs.append(
-        make_intr_reg(regs, 'INTR_STATE', offset, 'rw1c', 'hrw',
-                      'Interrupt State Register'))
-    iregs.append(
-        make_intr_reg(regs, 'INTR_ENABLE', offset + addrsep, 'rw', 'hro',
-                      'Interrupt Enable Register'))
-    iregs.append(
-        make_intr_reg(regs, 'INTR_TEST', offset + 2 * addrsep, 'wo', 'hro',
-                      'Interrupt Test Register'))
+    new_reg = make_intr_alert_reg(regs, 'INTR_STATE', offset, 'rw1c', 'hrw',
+                                  'Interrupt State Register')
+    iregs.append(new_reg)
+    new_reg = make_intr_alert_reg(regs, 'INTR_ENABLE', offset + addrsep, 'rw',
+                                  'hro', 'Interrupt Enable Register')
+    iregs.append(new_reg)
+    new_reg = make_intr_alert_reg(regs, 'INTR_TEST', offset + 2 * addrsep,
+                                  'wo', 'hro', 'Interrupt Test Register')
+    iregs.append(new_reg)
     return iregs, 0
+
+
+def make_alert_regs(regs, offset, addrsep, fullwidth):
+    alert_regs = []
+    alerts = regs['alert_list']
+    num_alerts = sum([int(x.get('width', '1'), 0) for x in alerts])
+    if num_alerts > fullwidth:
+        log.error('More than ' + str(fullwidth) + ' alerts in list')
+        return alert_regs, 1
+
+    new_reg = make_intr_alert_reg(regs, 'ALERT_TEST', offset, 'wo', 'hro',
+                                  'Alert Test Register')
+    alert_regs.append(new_reg)
+    return alert_regs, 0
 
 
 def validate_window(win, offset, regwidth, top):
@@ -1272,8 +1476,8 @@ def validate_window(win, offset, regwidth, top):
 
     # if there was an error before this then can't trust anything!
     if error > 0:
-        log.info(name + "@" + hex(offset) + " " + str(error) +
-                 " top level errors. Window will be ignored.")
+        log.debug(name + "@" + hex(offset) + " " + str(error) +
+                  " top level errors. Window will be ignored.")
         return error, offset
 
     # optional flags
@@ -1347,8 +1551,7 @@ def validate_window(win, offset, regwidth, top):
 
 """ Check that terms specified for regwen exist
 
-Regwen can be individual registers or fields within a register.  The function
-below checks for both and additional regwen properties.
+Regwen are all assumed to be individual registers.
 """
 
 
@@ -1368,29 +1571,47 @@ def check_wen_regs(regs):
 
     reg_list = [(reg['name'].lower(), reg['genresval'], reg['swaccess'],
                  reg['hwaccess']) for reg in regs['registers']
-                if 'name' in reg and 'genresval' in reg]
+                if 'name' in reg and 'genresval' in reg and 'swaccess' in reg]
+
     mreg_list = [
         reg['multireg'] for reg in regs['registers'] if 'multireg' in reg
     ]
-    field_list = [((reg['name'] + "_" + field['name']).lower(),
-                   field['genresval'], field['swaccess'], field['hwaccess'])
-                  for mreg in mreg_list for reg in mreg['genregs']
-                  for field in reg['fields']]
+
+    # all generated registers
+    mreg_reg_list = [reg for mreg in mreg_list for reg in mreg['genregs']]
+
+    # genreg attr
+    genreg_list = []
+    for reg in mreg_reg_list:
+        # There is only one field
+        if len(reg['fields']) == 1:
+            genreg_list.append(
+                (reg['name'].lower(), reg['fields'][0]['genresval'],
+                 reg['fields'][0]['swaccess'], reg['fields'][0]['hwaccess']))
+        else:
+            for f in reg['fields']:
+                genreg_list.append(
+                    ((reg['name'] + "_" + f['name']).lower(), f['genresval'],
+                     f['swaccess'], f['hwaccess']))
 
     # Need to check in register names and field list in case of multireg
-    reg_list.extend(field_list)
+    reg_list.extend(genreg_list)
 
     # check for reset value
     # both w1c and w0c are acceptable, ro is also acceptable when hwaccess is wo (hw managed regwen)
     for x in regs['genwennames']:
         target = x.lower()
-        log.info("check_wen_regs::Searching for %s" % target)
+        log.debug("check_wen_regs::Searching for %s" % target)
         try:
             idx = [r[tuple_name] for r in reg_list].index(target)
         except ValueError:
             log.error("Could not find register name matching %s" % target)
 
-        if not reg_list[idx][tuple_rstval]:
+        # If the REGWEN bit is SW controlled, enfore that this bit defaults to 1.
+        # If this bit is read-only by SW and hence hardware controlled, we do
+        # not enforce this requirement.
+        if reg_list[idx][tuple_swaccess] != "ro" and not reg_list[idx][
+                tuple_rstval]:
             error += 1
             log.error(x + " used as regwen fails requirement to default " +
                       "to 1")
@@ -1428,8 +1649,7 @@ def validate(regs, **kwargs):
 
     component = regs['name']
 
-    if 'param_list' not in regs:
-        regs['param_list'] = []
+    regs.setdefault('param_list', [])
 
     error = check_keys(regs, top_required, top_optional, top_added, component)
     if (error > 0):
@@ -1461,17 +1681,87 @@ def validate(regs, **kwargs):
     # auto header generation would go here and update autoregs
 
     if 'no_auto_intr_regs' in regs:
-        no_autoi, err = check_bool(regs['no_auto_intr_regs'],
-                                   'no_auto_intr_regs')
+        no_auto_intr, err = check_bool(regs['no_auto_intr_regs'],
+                                       'no_auto_intr_regs')
         if err:
             error += 1
     else:
-        no_autoi = False
-    if 'interrupt_list' in regs and 'genautoregs' not in regs and not no_autoi:
+        if 'interrupt_list' not in regs:
+            no_auto_intr = True
+        else:
+            no_auto_intr = False
+
+    if 'no_auto_alert_regs' in regs:
+        no_auto_alerts, err = check_bool(regs['no_auto_alert_regs'],
+                                         'no_auto_alert_regs')
+        if err:
+            error += 1
+    else:
+        if 'alert_list' not in regs:
+            no_auto_alerts = True
+        else:
+            no_auto_alerts = False
+
+    if 'interrupt_list' in regs and 'genautoregs' not in regs and not no_auto_intr:
         iregs, err = make_intr_regs(regs, offset, addrsep, fullwidth)
         error += err
         autoregs.extend(iregs)
         offset += addrsep * len(iregs)
+
+    # Generate a NumAlerts parameter for provided alert_list.
+    if regs.setdefault('alert_list', []):
+        # Generate alert test registers.
+        if 'genautoregs' not in regs and not no_auto_alerts:
+            aregs, err = make_alert_regs(regs, offset, addrsep, fullwidth)
+            error += err
+            autoregs.extend(aregs)
+            offset += addrsep * len(aregs)
+
+        num_alerts = 0
+        for alert in regs['alert_list']:
+            alert_width = int(alert.get('width', '1'), 0)
+            num_alerts += alert_width
+            if alert_width > 1:
+                log.warning(
+                    "{}: Consider naming each alert individually instead of "
+                    "declaring an alert signal with width > 1.".format(
+                        alert['name']))
+
+            # check alert naming scheme
+            if alert['name'] == "":
+                log.error("{}: Alert name cannot be empty".format(alert['name']))
+                error += 1
+            prefix = alert['name'].split('_')
+            if prefix[0] not in ['recov', 'fatal']:
+                # TODO: to be elevated to error severity
+                log.warning(
+                    "{}: Alerts must be prefixed with either 'recov_' or "
+                    "'fatal_'.".format(alert['name']))
+                # error += 1
+
+        if num_alerts != 0:
+            param = ''
+            for p in regs['param_list']:
+                if p['name'] == 'NumAlerts':
+                    param = p
+            if param:
+                # We already have an NumAlerts parameter.
+                if (param['type'] != 'int' or
+                        param['default'] != str(num_alerts) or
+                        param['local'] != 'true'):
+                    log.error(
+                        'Conflicting definition of NumAlerts parameter found.')
+                    error += 1
+            else:
+                # Generate the NumAlerts parameter.
+                regs['param_list'].append({
+                    'name': 'NumAlerts',
+                    'type': 'int',
+                    'default': str(num_alerts),
+                    'desc': 'Number of alerts',
+                    'local': 'true',
+                    'expose': 'false',
+                })
 
     # Change default param value if exists.
     #   Assumed param list is already validated in above `check_keys` function
@@ -1571,9 +1861,30 @@ def validate(regs, **kwargs):
         regs['registers'] = autoregs
         regs['genautoregs'] = True
 
-    log.info("Validated, size = " + hex(regs['gensize']) + " errors=" +
-             str(error) + " names are " + str(regs['genrnames']))
+    log.debug("Validated, size = " + hex(regs['gensize']) + " errors=" +
+              str(error) + " names are " + str(regs['genrnames']))
     if (error > 0):
         log.error("Register description had " + str(error) + " error" +
                   "s" if error > 1 else "")
+
+    regs.setdefault('inter_signal_list', [])
+    regs.setdefault('bus_device', '')
+    regs.setdefault('bus_host', '')
+
+    if regs["bus_device"] == "tlul":
+        # Add to inter_module_signal
+        port_name = "tl" if regs["bus_host"] in ["none", ""] else "tl_d"
+
+        regs["inter_signal_list"].append(
+            OrderedDict([('struct', 'tl'), ('package', 'tlul_pkg'),
+                         ('type', 'req_rsp'), ('act', 'rsp'),
+                         ('name', port_name)]))
+
+    if regs['bus_host'] == "tlul":
+        port_name = "tl" if regs["bus_host"] in ["none", ""] else "tl_h"
+
+        regs["inter_signal_list"].append(
+            OrderedDict([('struct', 'tl'), ('package', 'tlul_pkg'),
+                         ('type', 'req_rsp'), ('act', 'req'),
+                         ('name', port_name)]))
     return error

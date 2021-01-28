@@ -13,8 +13,8 @@ module rstmgr_por #(
 ) (
   input clk_i,
   input rst_ni,
-  input pok_i, // TODO: This should not be an actual separate port but the POR itself
-               // However, this cannot be done until AST integration is done.
+  input scan_rst_ni,
+  input scanmode_i,
   output logic rst_no
 );
   localparam int CtrWidth = $clog2(StretchCount+1);
@@ -29,26 +29,35 @@ module rstmgr_por #(
   // sync the POR
   prim_flop_2sync #(
     .Width(1),
-    .ResetValue(0)
+    .ResetValue('0)
   ) rst_sync (
     .clk_i(clk_i),
     .rst_ni(rst_ni),
-    .d(1'b1),
-    .q(rst_root_n)
+    .d_i(1'b1),
+    .q_o(rst_root_n)
   );
 
   // filter the POR
   always_ff @(posedge clk_i or negedge rst_root_n) begin
     if (!rst_root_n) begin
       rst_filter_n <= '0;
-    end else if (pok_i) begin // once AST is in, this conditional should not be here.
+    end else begin
       rst_filter_n <= {rst_filter_n[0 +: FilterStages-1], 1'b1};
     end
   end
 
   // The stable is a vote of all filter stages.
   // Only when all the stages agree is the reset considered stable and count allowed.
-  assign rst_clean_n = rst_filter_n[FilterStages-1];
+
+  prim_clock_mux2 #(
+    .NoFpgaBufG(1'b1)
+  ) u_rst_clean_mux (
+    .clk0_i(rst_filter_n[FilterStages-1]),
+    .clk1_i(scan_rst_ni),
+    .sel_i(scanmode_i),
+    .clk_o(rst_clean_n)
+  );
+
   assign rst_stable = &rst_filter_n;
   assign cnt_en = rst_stable & !rst_no;
 

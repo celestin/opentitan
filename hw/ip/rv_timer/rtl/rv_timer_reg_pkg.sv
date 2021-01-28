@@ -10,6 +10,9 @@ package rv_timer_reg_pkg;
   parameter int N_HARTS = 1;
   parameter int N_TIMERS = 1;
 
+  // Address width within the block
+  parameter int BlockAw = 9;
+
   ////////////////////////////
   // Typedefs for registers //
   ////////////////////////////
@@ -93,21 +96,21 @@ package rv_timer_reg_pkg;
   // Internal design logic to register //
   ///////////////////////////////////////
   typedef struct packed {
-    rv_timer_hw2reg_timer_v_lower0_reg_t timer_v_lower0; // [67:36]
-    rv_timer_hw2reg_timer_v_upper0_reg_t timer_v_upper0; // [35:4]
-    rv_timer_hw2reg_intr_state0_mreg_t [0:0] intr_state0; // [3:2]
+    rv_timer_hw2reg_timer_v_lower0_reg_t timer_v_lower0; // [67:35]
+    rv_timer_hw2reg_timer_v_upper0_reg_t timer_v_upper0; // [34:2]
+    rv_timer_hw2reg_intr_state0_mreg_t [0:0] intr_state0; // [1:0]
   } rv_timer_hw2reg_t;
 
   // Register Address
-  parameter logic [8:0] RV_TIMER_CTRL_OFFSET = 9'h 0;
-  parameter logic [8:0] RV_TIMER_CFG0_OFFSET = 9'h 100;
-  parameter logic [8:0] RV_TIMER_TIMER_V_LOWER0_OFFSET = 9'h 104;
-  parameter logic [8:0] RV_TIMER_TIMER_V_UPPER0_OFFSET = 9'h 108;
-  parameter logic [8:0] RV_TIMER_COMPARE_LOWER0_0_OFFSET = 9'h 10c;
-  parameter logic [8:0] RV_TIMER_COMPARE_UPPER0_0_OFFSET = 9'h 110;
-  parameter logic [8:0] RV_TIMER_INTR_ENABLE0_OFFSET = 9'h 114;
-  parameter logic [8:0] RV_TIMER_INTR_STATE0_OFFSET = 9'h 118;
-  parameter logic [8:0] RV_TIMER_INTR_TEST0_OFFSET = 9'h 11c;
+  parameter logic [BlockAw-1:0] RV_TIMER_CTRL_OFFSET = 9'h 0;
+  parameter logic [BlockAw-1:0] RV_TIMER_CFG0_OFFSET = 9'h 100;
+  parameter logic [BlockAw-1:0] RV_TIMER_TIMER_V_LOWER0_OFFSET = 9'h 104;
+  parameter logic [BlockAw-1:0] RV_TIMER_TIMER_V_UPPER0_OFFSET = 9'h 108;
+  parameter logic [BlockAw-1:0] RV_TIMER_COMPARE_LOWER0_0_OFFSET = 9'h 10c;
+  parameter logic [BlockAw-1:0] RV_TIMER_COMPARE_UPPER0_0_OFFSET = 9'h 110;
+  parameter logic [BlockAw-1:0] RV_TIMER_INTR_ENABLE0_OFFSET = 9'h 114;
+  parameter logic [BlockAw-1:0] RV_TIMER_INTR_STATE0_OFFSET = 9'h 118;
+  parameter logic [BlockAw-1:0] RV_TIMER_INTR_TEST0_OFFSET = 9'h 11c;
 
 
   // Register Index

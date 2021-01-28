@@ -4,25 +4,24 @@
 {
   name: "${name}"
   // TODO: remove the common testplans if not applicable
-  import_testplans: ["hw/dv/tools/testplans/csr_testplan.hjson",
-                     "hw/dv/tools/testplans/mem_testplan.hjson",
-                     "hw/dv/tools/testplans/intr_test_testplan.hjson",
-                     "hw/dv/tools/testplans/tl_device_access_types_testplan.hjson"]
+  import_testplans: ["hw/dv/tools/dvsim/testplans/csr_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/mem_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/intr_test_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/tl_device_access_types_testplan.hjson"]
   entries: [
     {
-      name: sanity
-      desc: '''**Goal**: Basic sanity test acessing a major datapath in ${name.upper()}.
+      name: smoke
+      desc: '''
+            Smoke test accessing a major datapath within the ${name}.
 
-            **Stimulus**: Describe the stimulus procedure.
+            **Stimulus**:
+            - TBD
 
-            **Checks**": Describe the self-check procedure.
-            - add bullets as needed
-            - second bullet<br>
-              describe second bullet
-
-            Start a new paragraph.'''
+            **Checks**:
+            - TBD
+            '''
       milestone: V1
-      tests: ["${name}_sanity"]
+      tests: ["${name}_smoke"]
     }
     {
       name: feature1

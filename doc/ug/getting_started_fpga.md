@@ -36,15 +36,27 @@ $ ./meson_init.sh
 $ ninja -C build-out sw/device/boot_rom/boot_rom_export_fpga_nexysvideo
 ```
 
-In the following example we synthesize the Earl Grey design for the Nexys Video board using Xilinx Vivado 2018.3.
+Since not all FPGAs are able to fit the full design, there is a separate script that can be invoked to reduce the size of the design.
+
+To reduce the design:
+```console
+$ cd $REPO_TOP
+$ ./hw/top_earlgrey/util/top_earlgrey_reduce.py
+```
+By default, the reduce script targets 'nexysvideo', cw305 is also supported.
+
+
+In the following example we synthesize the Earl Grey design for the Nexys Video board using Xilinx Vivado 2020.1.
 
 ```console
-$ . /tools/xilinx/Vivado/2018.3/settings64.sh
+$ . /tools/xilinx/Vivado/2020.1/settings64.sh
 $ cd $REPO_TOP
 $ ./meson_init.sh
+$ ./hw/top_earlgrey/util/top_earlgrey_reduce.py
 $ ninja -C build-out sw/device/boot_rom/boot_rom_export_fpga_nexysvideo
-$ fusesoc --cores-root . run --target=synth lowrisc:systems:top_earlgrey_nexysvideo
+$ fusesoc --cores-root . run --flag=fileset_top --target=synth lowrisc:systems:top_earlgrey_nexysvideo
 ```
+The fsel_top flag used above is specific to the OpenTitan project to select the correct fileset.
 
 The resulting bitstream is located at `build/lowrisc_systems_top_earlgrey_nexysvideo_0.1/synth-vivado/lowrisc_systems_top_earlgrey_nexysvideo_0.1.bit`.
 See the [reference manual]({{< relref "ref_manual_fpga.md" >}}) for more information.
@@ -65,7 +77,7 @@ To flash the bitstream onto the FPGA you need to use either the Vivado GUI or th
 Use the following command to program the FPGA with fusesoc.
 
 ```console
-$ . /tools/xilinx/Vivado/2018.3/settings64.sh
+$ . /tools/xilinx/Vivado/2020.1/settings64.sh
 $ cd $REPO_TOP
 $ fusesoc --cores-root . pgm lowrisc:systems:top_earlgrey_nexysvideo:0.1
 ```
@@ -86,7 +98,7 @@ If you have having trouble with programming using the command line, try the GUI.
 ### Using the Vivado GUI
 
 ```console
-$ . /tools/xilinx/Vivado/2018.3/settings64.sh
+$ . /tools/xilinx/Vivado/2020.1/settings64.sh
 $ cd $REPO_TOP
 $ make -C build/lowrisc_systems_top_earlgrey_nexysvideo_0.1/synth-vivado build-gui
 ```
@@ -95,7 +107,7 @@ Now the Vivado GUI opens and loads the project.
 
 * Connect the FPGA board to the PC and turn it on.
 * In the navigation on the left, click on *PROGRAM AND DEBUG* > *Open Hardware Manager* > *Open Target* > *Auto Connect*.
-* Vivado now enumerates all boards and connects to it. (Note on Vivado 2018.1 you may get an error the first time and have to do auto connect twice.)
+* Vivado now enumerates all boards and connects to it.
 * Click on *Program Device* in the menu on the left (or at the top of the screen).
 * A dialog titled *Program Device* pops up. Select the file `lowrisc_systems_top_earlgrey_nexysvideo_0.1.bit` as *Bitstream file*, and leave the *Debug probes file* empty.
 * Click on *Program* to flash the FPGA with the bitstream.
@@ -110,12 +122,12 @@ Please follow the steps shown below.
 
 * Generate the bitstream and flash it to the FPGA as described above.
 * Open a serial console (use the device file determined before) and connect.
-  Settings: 230400 baud, 8N1, no hardware or software flow control.
+  Settings: 115200 baud, 8N1, no hardware or software flow control.
   ```console
-  $ screen /dev/ttyUSB0 230400
+  $ screen /dev/ttyUSB0 115200
   ```
-  Note that the Nexsys Video demo program that comes installed on the board runs the UART at 115200 baud;
-  expect to see garbage characters if that is running.
+  Note that the Nexsys Video demo program that comes installed on the board runs the UART at 115200 baud as well;
+  expect to see different output if that is running.
   This can happen if you connect the serial console before using Vivado to program your new bitstream or you press the *PROG* button that causes the FPGA to reprogram from the code in the on-board SPI flash.
 * On the Nexys Video board, press the red button labeled *CPU_RESET*.
 * You should see the ROM code report its commit ID and build date.
@@ -125,8 +137,7 @@ Please follow the steps shown below.
   $ ./meson_init.sh
   $ ninja -C build-out sw/device/examples/hello_world/hello_world_export_fpga_nexysvideo
   $ ninja -C build-out sw/host/spiflash/spiflash_export
-  $ build-bin/sw/host/spiflash/spiflash \
-      --input build-bin/sw/device/fpga/examples/hello_world/hello_world_fpga_nexysvideo.bin
+  $ build-bin/sw/host/spiflash/spiflash --input build-bin/sw/device/examples/hello_world/hello_world_fpga_nexysvideo.bin
   ```
 
   which should report how the binary is split into frames:

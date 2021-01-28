@@ -5,7 +5,6 @@
 import os
 import re
 import shutil
-import subprocess
 import sys
 
 import yaml
@@ -45,6 +44,7 @@ def _prim_cores(cores, prim_name=None):
         if (vlnv['vendor'] == 'lowrisc' and
                 vlnv['library'].startswith('prim_') and
             (prim_name is None or vlnv['name'] == prim_name)):
+
             return core
         return None
 
@@ -159,6 +159,14 @@ def _parse_module_header(generic_impl_filepath, module_name):
     }
 
 
+def test_parse_parameter_port_list():
+    assert _parse_parameter_port_list("parameter integer P") == {'P'}
+    assert _parse_parameter_port_list("parameter logic [W-1:0] P") == {'P'}
+    assert _parse_parameter_port_list("parameter logic [W-1:0] P = '0") == {'P'}
+    assert _parse_parameter_port_list("parameter logic [W-1:0] P = 'b0") == {'P'}
+    assert _parse_parameter_port_list("parameter logic [W-1:0] P = 2'd0") == {'P'}
+
+
 def _parse_parameter_port_list(parameter_port_list):
     """ Parse a list of ports in a module header into individual parameters """
 
@@ -177,9 +185,9 @@ def _parse_parameter_port_list(parameter_port_list):
     # XXX: Not covering the complete grammar, e.g. `parameter x, y`
     RE_PARAMS = (
         r'parameter\s+'
-        r'(?:[a-zA-Z0-9\]\[:\s\$]+\s+)?'  # type
+        r'(?:[a-zA-Z0-9\]\[:\s\$-]+\s+)?'  # type
         r'(?P<name>\w+)'  # name
-        r'(?:\s*=\s*[^,;]+)'  # initial value
+        r'(?:\s*=\s*[^,;]+)?'  # initial value
     )
     re_params = re.compile(RE_PARAMS)
     parameters = set()
@@ -189,9 +197,8 @@ def _parse_parameter_port_list(parameter_port_list):
 
 
 def _check_gapi(gapi):
-    if not 'cores' in gapi:
+    if 'cores' not in gapi:
         print("Key 'cores' not found in GAPI structure. "
-              "At least FuseSoC 1.11 is needed. "
               "Install a compatible version with "
               "'pip3 install --user -r python-requirements.txt'.")
         return False
@@ -233,11 +240,14 @@ def _generate_prim_pkg(gapi):
 
 
 def _instance_sv(prim_name, techlib, parameters):
-    s = "prim_{techlib}_{prim_name} #(\n"
-    s += ", ".join(".{p}({p})".format(p=p) for p in parameters)
-    s += ") u_impl_{techlib} (\n" \
-         "  .*\n" \
-         ");\n"
+    if not parameters:
+        s = "    prim_{techlib}_{prim_name} u_impl_{techlib} (\n"
+    else:
+        s = "    prim_{techlib}_{prim_name} #(\n"
+        s += ",\n".join("      .{p}({p})".format(p=p) for p in parameters)
+        s += "\n    ) u_impl_{techlib} (\n"
+    s += "      .*\n" \
+         "    );\n"
     return s.format(prim_name=prim_name, techlib=techlib)
 
 
@@ -252,9 +262,9 @@ def _create_instances(prim_name, techlibs, parameters):
         # Don't output the if/else blocks if there no alternatives exist.
         # We still want the generate block to keep hierarchical path names
         # stable, even if more than one techlib is found.
-        s = " if (1) begin : gen_generic\n"
+        s = "  if (1) begin : gen_generic\n"
         s += _instance_sv(prim_name, "generic", parameters) + "\n"
-        s += "end"
+        s += "  end"
         return s
 
     nr_techlibs = len(techlibs_generic_last)
@@ -273,7 +283,10 @@ def _create_instances(prim_name, techlibs, parameters):
         # to let the synthesis tool figure out the connectivity than us trying
         # to parse the port list into individual signals.
         s += "begin : gen_{techlib}\n" + _instance_sv(prim_name, techlib,
-                                                      parameters) + "end "
+                                                      parameters) + "end"
+
+        if not is_last:
+            s += " "
 
         out += s.format(prim_name=prim_name,
                         techlib=techlib,
@@ -287,7 +300,7 @@ def _generate_abstract_impl(gapi):
 
     techlibs = _techlibs(prim_cores)
 
-    if not 'generic' in techlibs:
+    if 'generic' not in techlibs:
         raise ValueError("Techlib generic is required, but not found for "
                          "primitive %s." % prim_name)
     print("Implementations for primitive %s: %s" %
@@ -317,6 +330,7 @@ def _generate_abstract_impl(gapi):
         module_header_imports=generic_hdr['package_import_declaration'],
         module_header_params=generic_hdr['parameter_port_list'],
         module_header_ports=generic_hdr['ports'],
+        num_techlibs= len(techlibs),
         # Creating the code to instantiate the primitives in the Mako templating
         # language is tricky to do; do it in Python instead.
         instances=_create_instances(prim_name, techlibs,
@@ -364,8 +378,7 @@ def _generate_abstract_impl(gapi):
         yaml.dump(abstract_prim_core,
                   f,
                   encoding="utf-8",
-                  default_flow_style=False,
-                  sort_keys=False)
+                  Dumper=YamlDumper)
     print("Core file written to %s" % (abstract_prim_core_filepath, ))
 
 
@@ -377,7 +390,8 @@ def _get_action_from_gapi(gapi, default_action):
 
 def main():
     gapi_filepath = sys.argv[1]
-    gapi = yaml.load(open(gapi_filepath), Loader=YamlLoader)
+    with open(gapi_filepath) as f:
+        gapi = yaml.load(f, Loader=YamlLoader)
 
     if not _check_gapi(gapi):
         sys.exit(1)

@@ -11,22 +11,49 @@ tl_device_t xbar_devices[$] = '{
         '{32'h40000000, 32'h40000fff}
     }},
     '{"gpio", '{
-        '{32'h40010000, 32'h40010fff}
+        '{32'h40040000, 32'h40040fff}
     }},
     '{"spi_device", '{
-        '{32'h40020000, 32'h40020fff}
+        '{32'h40050000, 32'h40050fff}
     }},
     '{"rv_timer", '{
-        '{32'h40080000, 32'h40080fff}
+        '{32'h40100000, 32'h40100fff}
     }},
     '{"usbdev", '{
-        '{32'h40150000, 32'h40150fff}
+        '{32'h40500000, 32'h40500fff}
     }},
     '{"pwrmgr", '{
-        '{32'h400a0000, 32'h400a0fff}
+        '{32'h40400000, 32'h40400fff}
     }},
     '{"rstmgr", '{
-        '{32'h400b0000, 32'h400b0fff}
+        '{32'h40410000, 32'h40410fff}
+    }},
+    '{"clkmgr", '{
+        '{32'h40420000, 32'h40420fff}
+    }},
+    '{"ram_ret", '{
+        '{32'h18000000, 32'h18000fff}
+    }},
+    '{"otp_ctrl", '{
+        '{32'h40130000, 32'h40133fff}
+    }},
+    '{"lc_ctrl", '{
+        '{32'h40140000, 32'h40140fff}
+    }},
+    '{"sensor_ctrl", '{
+        '{32'h40110000, 32'h40110fff}
+    }},
+    '{"alert_handler", '{
+        '{32'h40150000, 32'h40150fff}
+    }},
+    '{"sram_ctrl_ret", '{
+        '{32'h40510000, 32'h40510fff}
+    }},
+    '{"nmi_gen", '{
+        '{32'h40160000, 32'h40160fff}
+    }},
+    '{"ast_wrapper", '{
+        '{32'h40180000, 32'h40180fff}
 }}};
 
   // List of Xbar hosts
@@ -38,5 +65,14 @@ tl_host_t xbar_hosts[$] = '{
         "rv_timer",
         "usbdev",
         "pwrmgr",
-        "rstmgr"}}
+        "rstmgr",
+        "clkmgr",
+        "ram_ret",
+        "otp_ctrl",
+        "lc_ctrl",
+        "sensor_ctrl",
+        "alert_handler",
+        "nmi_gen",
+        "ast_wrapper",
+        "sram_ctrl_ret"}}
 };

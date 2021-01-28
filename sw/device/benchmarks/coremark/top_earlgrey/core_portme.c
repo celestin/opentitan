@@ -9,7 +9,12 @@
 
 #include "sw/device/lib/arch/device.h"
 #include "sw/device/lib/base/stdasm.h"
+#include "sw/device/lib/dif/dif_uart.h"
+#include "sw/device/lib/testing/check.h"
+#include "sw/device/lib/testing/test_status.h"
 #include "sw/vendor/eembc_coremark/coremark.h"
+
+#include "hw/top_earlgrey/sw/autogen/top_earlgrey.h"  // Generated.
 
 #if VALIDATION_RUN
 volatile ee_s32 seed1_volatile = 0x3415;
@@ -102,12 +107,27 @@ secs_ret time_in_secs(CORE_TICKS ticks) {
 
 ee_u32 default_num_contexts = 1;
 
+static dif_uart_t uart;
+
 /* Function : portable_init
         Target specific initialization code
         Test for some common mistakes.
 */
 void portable_init(core_portable *p, int *argc, char *argv[]) {
-  uart_init(kUartBaudrate);
+  CHECK(dif_uart_init(
+            (dif_uart_params_t){
+                .base_addr = mmio_region_from_addr(TOP_EARLGREY_UART_BASE_ADDR),
+            },
+            &uart) == kDifUartOk,
+        "failed to init UART");
+  CHECK(dif_uart_configure(&uart,
+                           (dif_uart_config_t){
+                               .baudrate = kUartBaudrate,
+                               .clk_freq_hz = kClockFreqPeripheralHz,
+                               .parity_enable = kDifUartToggleDisabled,
+                               .parity = kDifUartParityEven,
+                           }) == kDifUartConfigOk,
+        "failed to configure UART");
 
   if (sizeof(ee_ptr_int) != sizeof(ee_u8 *)) {
     ee_printf(
@@ -121,4 +141,7 @@ void portable_init(core_portable *p, int *argc, char *argv[]) {
 /* Function : portable_fini
         Target specific final code
 */
-void portable_fini(core_portable *p) { p->portable_id = 0; }
+void portable_fini(core_portable *p) {
+  p->portable_id = 0;
+  test_status_set(kTestStatusPassed);
+}

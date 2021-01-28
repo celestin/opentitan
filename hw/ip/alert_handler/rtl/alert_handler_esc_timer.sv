@@ -33,7 +33,7 @@ module alert_handler_esc_timer import alert_pkg::*; (
                [EscCntDw-1:0]  phase_cyc_i,    // cycle counts of individual phases
   output logic                 esc_trig_o,     // asserted if escalation triggers
   output logic [EscCntDw-1:0]  esc_cnt_o,      // current timeout / escalation count
-  output logic [N_ESC_SEV-1:0] esc_sig_en_o,   // escalation signal outputs
+  output logic [N_ESC_SEV-1:0] esc_sig_req_o,  // escalation signal outputs
   // current state output
   // 000: idle, 001: irq timeout counting 100: phase0, 101: phase1, 110: phase2, 111: phase3
   output cstate_e              esc_state_o
@@ -78,12 +78,10 @@ module alert_handler_esc_timer import alert_pkg::*; (
     unique case (state_q)
       // wait for an escalation trigger or an alert trigger
       // the latter will trigger an interrupt timeout
-      // note, clr_i is intentionally not used in Idle such that any trigger
-      // will have to go through escalation, if enabled
       Idle: begin
         cnt_clr = 1'b1;
 
-        if (accum_trig_i && en_i) begin
+        if (accum_trig_i && en_i && !clr_i) begin
           state_d    = Phase0;
           cnt_en     = 1'b1;
           esc_trig_o = 1'b1;
@@ -101,7 +99,7 @@ module alert_handler_esc_timer import alert_pkg::*; (
       // also enter escalation phase0.
       // ongoing timeouts can always be cleared.
       Timeout: begin
-        if (accum_trig_i || (cnt_ge && timeout_en_i)) begin
+        if ((accum_trig_i && en_i && !clr_i) || (cnt_ge && timeout_en_i)) begin
           state_d    = Phase0;
           cnt_en     = 1'b1;
           cnt_clr    = 1'b1;
@@ -193,7 +191,7 @@ module alert_handler_esc_timer import alert_pkg::*; (
     // generate configuration mask for escalation enable signals
     assign esc_map_oh[k] = N_ESC_SEV'(esc_en_i[k]) << esc_map_i[k];
     // mask reduce current phase state vector
-    assign esc_sig_en_o[k] = |(esc_map_oh[k] & phase_oh);
+    assign esc_sig_req_o[k] = |(esc_map_oh[k] & phase_oh);
   end
 
   ///////////////
@@ -230,9 +228,9 @@ module alert_handler_esc_timer import alert_pkg::*; (
   `ASSERT(CheckEn,  state_q == Idle && !en_i |=>
       state_q == Idle)
   // Check if accumulation trigger correctly captured
-  `ASSERT(CheckAccumTrig0,  accum_trig_i && state_q == Idle && en_i |=>
+  `ASSERT(CheckAccumTrig0,  accum_trig_i && state_q == Idle && en_i && !clr_i |=>
       state_q == Phase0)
-  `ASSERT(CheckAccumTrig1,  accum_trig_i && state_q == Timeout && en_i |=>
+  `ASSERT(CheckAccumTrig1,  accum_trig_i && state_q == Timeout && en_i && !clr_i |=>
       state_q == Phase0)
   // Check if timeout correctly captured
   `ASSERT(CheckTimeout0, state_q == Idle && timeout_en_i && en_i && timeout_cyc_i != 0 &&

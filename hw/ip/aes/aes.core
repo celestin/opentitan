@@ -8,25 +8,32 @@ filesets:
   files_rtl:
     depend:
       - lowrisc:prim:all
+      - lowrisc:prim:lfsr
       - lowrisc:ip:tlul
     files:
       - rtl/aes_pkg.sv
       - rtl/aes_reg_pkg.sv
       - rtl/aes_reg_top.sv
       - rtl/aes_core.sv
-      - rtl/aes_prng.sv
       - rtl/aes_ctr.sv
       - rtl/aes_control.sv
+      - rtl/aes_reg_status.sv
+      - rtl/aes_sel_buf_chk.sv
       - rtl/aes_cipher_core.sv
       - rtl/aes_cipher_control.sv
       - rtl/aes_sub_bytes.sv
       - rtl/aes_sbox.sv
       - rtl/aes_sbox_lut.sv
+      - rtl/aes_sbox_canright_pkg.sv
       - rtl/aes_sbox_canright.sv
+      - rtl/aes_sbox_canright_masked_noreuse.sv
+      - rtl/aes_sbox_canright_masked.sv
       - rtl/aes_shift_rows.sv
       - rtl/aes_mix_columns.sv
       - rtl/aes_mix_single_column.sv
       - rtl/aes_key_expand.sv
+      - rtl/aes_prng_clearing.sv
+      - rtl/aes_prng_masking.sv
       - rtl/aes.sv
     file_type: systemVerilogSource
 
@@ -48,10 +55,11 @@ filesets:
       - lint/aes.waiver
     file_type: waiver
 
-  files_formal:
-    files:
-      - dv/tb/aes_bind.sv
-    file_type: systemVerilogSource
+  files_veriblelint_waiver:
+    depend:
+      # common waivers
+      - lowrisc:lint:common
+      - lowrisc:lint:comportable
 
 parameters:
   SYNTHESIS:
@@ -62,15 +70,9 @@ parameters:
 targets:
   default: &default_target
     filesets:
-      - tool_verilator  ? (files_verilator_waiver)
-      - tool_ascentlint ? (files_ascentlint_waiver)
-      - target_formal   ? (files_formal)
-      - files_rtl
-    toplevel: aes
-
-  formal:
-    filesets:
-      - files_formal
+      - tool_verilator   ? (files_verilator_waiver)
+      - tool_ascentlint  ? (files_ascentlint_waiver)
+      - tool_veriblelint ? (files_veriblelint_waiver)
       - files_rtl
     toplevel: aes
 
@@ -93,5 +95,3 @@ targets:
     default_tool: icarus
     parameters:
       - SYNTHESIS=true
-
-

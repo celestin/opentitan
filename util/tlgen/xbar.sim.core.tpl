@@ -9,7 +9,7 @@ description: "XBAR DV sim target"
 filesets:
   files_dv:
     depend:
-      - lowrisc:ip:xbar_${xbar.name}
+      - lowrisc:${library_name}:xbar_${xbar.name}
       - lowrisc:dv:dv_utils
       - lowrisc:dv:xbar_tb
       - lowrisc:dv:xbar_${xbar.name}_bind
@@ -20,8 +20,11 @@ filesets:
 
 
 targets:
-  sim:
+  sim: &sim_target
     toplevel: xbar_tb_top
     filesets:
       - files_dv
     default_tool: vcs
+
+  lint:
+    <<: *sim_target

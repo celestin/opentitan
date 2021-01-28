@@ -22,9 +22,9 @@ module spi_device #(
   // SPI Interface
   input              cio_sck_i,
   input              cio_csb_i,
-  output logic       cio_miso_o,
-  output logic       cio_miso_en_o,
-  input              cio_mosi_i,
+  output logic       cio_sdo_o,
+  output logic       cio_sdo_en_o,
+  input              cio_sdi_i,
 
   // Interrupts
   output logic intr_rxf_o,         // RX FIFO Full
@@ -46,8 +46,8 @@ module spi_device #(
   localparam int PtrW = SramAw + 1 + SDW;
   localparam int AsFifoDepthW = $clog2(FifoDepth+1);
 
-  logic clk_spi_in;   // clock for latch MOSI
-  logic clk_spi_out;  // clock for driving MISO
+  logic clk_spi_in, clk_spi_in_buf;   // clock for latch SDI
+  logic clk_spi_out, clk_spi_out_buf; // clock for driving SDO
 
   spi_device_reg2hw_t reg2hw;
   spi_device_hw2reg_t hw2reg;
@@ -184,30 +184,30 @@ module spi_device #(
   prim_flop_2sync #(.Width(1)) u_sync_csb (
     .clk_i,
     .rst_ni,
-    .d(cio_csb_i),
-    .q(csb_syncd)
+    .d_i(cio_csb_i),
+    .q_o(csb_syncd)
   );
 
   logic rxf_full_q, txf_empty_q;
-  always_ff @(posedge clk_spi_in or negedge rst_ni) begin
+  always_ff @(posedge clk_spi_in_buf or negedge rst_ni) begin
     if (!rst_ni) rxf_full_q <= 1'b0;
     else         rxf_full_q <= ~rxf_wready;
   end
-  always_ff @(posedge clk_spi_out or negedge rst_ni) begin
+  always_ff @(posedge clk_spi_out_buf or negedge rst_ni) begin
     if (!rst_ni) txf_empty_q <= 1'b1;
     else         txf_empty_q <= ~txf_rvalid;
   end
   prim_flop_2sync #(.Width(1)) u_sync_rxf (
     .clk_i,
     .rst_ni,
-    .d(rxf_full_q),
-    .q(rxf_full_syncd)
+    .d_i(rxf_full_q),
+    .q_o(rxf_full_syncd)
   );
   prim_flop_2sync #(.Width(1), .ResetValue(1'b1)) u_sync_txe (
     .clk_i,
     .rst_ni,
-    .d(txf_empty_q),
-    .q(txf_empty_syncd)
+    .d_i(txf_empty_q),
+    .q_o(txf_empty_syncd)
   );
 
   assign spi_mode = spi_mode_e'(reg2hw.control.mode.q);
@@ -259,7 +259,7 @@ module spi_device #(
   //    Could trigger lint error for input clock.
   //    It's unavoidable due to the characteristics of SPI intf
   prim_pulse_sync u_rxf_overflow (
-    .clk_src_i   (clk_spi_in         ),
+    .clk_src_i   (clk_spi_in_buf     ),
     .rst_src_ni  (rst_ni             ),
     .src_pulse_i (rxf_overflow       ),
     .clk_dst_i   (clk_i              ),
@@ -271,7 +271,7 @@ module spi_device #(
   //    Could trigger lint error for input clock.
   //    It's unavoidable due to the characteristics of SPI intf
   prim_pulse_sync u_txf_underflow (
-    .clk_src_i   (clk_spi_out         ),
+    .clk_src_i   (clk_spi_out_buf     ),
     .rst_src_ni  (rst_ni              ),
     .src_pulse_i (txf_underflow       ),
     .clk_dst_i   (clk_i               ),
@@ -310,13 +310,22 @@ module spi_device #(
   //////////////////////////////
   //  clk_spi cannot use glitch-free clock mux as clock switching in glitch-free
   //  requires two clocks to propagate clock selection and enable but SPI clock
-  //  doesn't exist until it transmits data through MOSI
+  //  doesn't exist until it transmits data through SDI
   logic sck_n;
   logic rst_spi_n;
 
-  prim_clock_inverter u_clk_spi (.clk_i(cio_sck_i), .clk_no(sck_n), .scanmode_i);
+  prim_clock_inv u_clk_spi (.clk_i(cio_sck_i), .clk_no(sck_n), .scanmode_i);
   assign clk_spi_in  = (cpha ^ cpol) ? sck_n    : cio_sck_i   ;
   assign clk_spi_out = (cpha ^ cpol) ? cio_sck_i    : sck_n   ;
+
+  prim_clock_buf u_clk_spi_in_buf(
+    .clk_i (clk_spi_in),
+    .clk_o (clk_spi_in_buf)
+  );
+  prim_clock_buf u_clk_spi_out_buf(
+    .clk_i (clk_spi_out),
+    .clk_o (clk_spi_out_buf)
+  );
 
   assign rst_spi_n = (scanmode_i) ? rst_ni : rst_ni & ~cio_csb_i;
 
@@ -328,10 +337,10 @@ module spi_device #(
   // FW Mode //
   /////////////
   spi_fwmode u_fwmode (
-    .clk_in_i     (clk_spi_in),
+    .clk_in_i     (clk_spi_in_buf),
     .rst_in_ni    (rst_spi_n),
 
-    .clk_out_i    (clk_spi_out),
+    .clk_out_i    (clk_spi_out_buf),
     .rst_out_ni   (rst_spi_n),
 
     .cpha_i        (cpha),
@@ -353,9 +362,9 @@ module spi_device #(
 
     // SPI signal
     .csb_i         (cio_csb_i),
-    .mosi          (cio_mosi_i),
-    .miso          (cio_miso_o),
-    .miso_oe       (cio_miso_en_o)
+    .sdi_i         (cio_sdi_i),
+    .sdo_o         (cio_sdo_o),
+    .sdo_oe_o      (cio_sdo_en_o)
   );
 
   // FIFO: Connecting FwMode to SRAM CTRLs
@@ -363,22 +372,22 @@ module spi_device #(
     .Width (FifoWidth),
     .Depth (FifoDepth)
   ) u_rx_fifo (
-    .clk_wr_i     (clk_spi_in),
+    .clk_wr_i     (clk_spi_in_buf),
     .rst_wr_ni    (rst_rxfifo_n),
 
     .clk_rd_i     (clk_i),
     .rst_rd_ni    (rst_rxfifo_n),
 
-    .wvalid       (rxf_wvalid),
-    .wready       (rxf_wready),
-    .wdata        (rxf_wdata),
+    .wvalid_i     (rxf_wvalid),
+    .wready_o     (rxf_wready),
+    .wdata_i      (rxf_wdata),
 
-    .rvalid       (rxf_rvalid),
-    .rready       (rxf_rready),
-    .rdata        (rxf_rdata),
+    .rvalid_o     (rxf_rvalid),
+    .rready_i     (rxf_rready),
+    .rdata_o      (rxf_rdata),
 
-    .wdepth       (),
-    .rdepth       (as_rxfifo_depth)
+    .wdepth_o     (),
+    .rdepth_o     (as_rxfifo_depth)
   );
 
   prim_fifo_async #(
@@ -388,19 +397,19 @@ module spi_device #(
     .clk_wr_i     (clk_i),
     .rst_wr_ni    (rst_txfifo_n),
 
-    .clk_rd_i     (clk_spi_out),
+    .clk_rd_i     (clk_spi_out_buf),
     .rst_rd_ni    (rst_txfifo_n),
 
-    .wvalid       (txf_wvalid),
-    .wready       (txf_wready),
-    .wdata        (txf_wdata),
+    .wvalid_i     (txf_wvalid),
+    .wready_o     (txf_wready),
+    .wdata_i      (txf_wdata),
 
-    .rvalid       (txf_rvalid),
-    .rready       (txf_rready),
-    .rdata        (txf_rdata),
+    .rvalid_o     (txf_rvalid),
+    .rready_i     (txf_rready),
+    .rdata_o      (txf_rdata),
 
-    .wdepth       (as_txfifo_depth),
-    .rdepth       ()
+    .wdepth_o     (as_txfifo_depth),
+    .rdepth_o     ()
   );
 
   // RX Fifo control (FIFO Read port --> SRAM request)
@@ -467,31 +476,31 @@ module spi_device #(
 
   // Arbiter for FIFOs : Connecting between SRAM Ctrls and SRAM interface
   prim_sram_arbiter #(
-    .N       (2),  // RXF, TXF
-    .SramDw (SramDw),
-    .SramAw (SramAw)   // 2kB
+    .N            (2),  // RXF, TXF
+    .SramDw       (SramDw),
+    .SramAw       (SramAw)   // 2kB
   ) u_fwmode_arb (
     .clk_i,
     .rst_ni,
 
-    .req          (fwm_sram_req),
-    .req_addr     (fwm_sram_addr),
-    .req_write    (fwm_sram_write),
-    .req_wdata    (fwm_sram_wdata),
-    .gnt          (fwm_sram_gnt),
+    .req_i        (fwm_sram_req),
+    .req_addr_i   (fwm_sram_addr),
+    .req_write_i  (fwm_sram_write),
+    .req_wdata_i  (fwm_sram_wdata),
+    .gnt_o        (fwm_sram_gnt),
 
-    .rsp_rvalid   (fwm_sram_rvalid),
-    .rsp_rdata    (fwm_sram_rdata),
-    .rsp_error    (fwm_sram_error),
+    .rsp_rvalid_o (fwm_sram_rvalid),
+    .rsp_rdata_o  (fwm_sram_rdata),
+    .rsp_error_o  (fwm_sram_error),
 
-    .sram_req     (mem_b_req),
-    .sram_addr    (mem_b_addr),
-    .sram_write   (mem_b_write),
-    .sram_wdata   (mem_b_wdata),
+    .sram_req_o   (mem_b_req),
+    .sram_addr_o  (mem_b_addr),
+    .sram_write_o (mem_b_write),
+    .sram_wdata_o (mem_b_wdata),
 
-    .sram_rvalid  (mem_b_rvalid),
-    .sram_rdata   (mem_b_rdata),
-    .sram_rerror  (mem_b_rerror)
+    .sram_rvalid_i(mem_b_rvalid),
+    .sram_rdata_i (mem_b_rdata),
+    .sram_rerror_i(mem_b_rerror)
   );
 
   tlul_adapter_sram #(
@@ -521,14 +530,13 @@ module spi_device #(
   prim_ram_2p_adv #(
     .Depth (512),
     .Width (SramDw),    // 32 x 512 --> 2kB
+    .DataBitsPerMask (8),
     .CfgW  (8),
 
-    .EnableECC           (1), // No Protection
-    .EnableParity        (0),
+    .EnableECC           (0),
+    .EnableParity        (1),
     .EnableInputPipeline (0),
-    .EnableOutputPipeline(0),
-    // this is a large memory, implement with SRAM
-    .MemT ("SRAM")
+    .EnableOutputPipeline(0)
   ) u_memory_2p (
     .clk_i,
     .rst_ni,
@@ -536,6 +544,7 @@ module spi_device #(
     .a_write_i  (mem_a_write),
     .a_addr_i   (mem_a_addr),
     .a_wdata_i  (mem_a_wdata),
+    .a_wmask_i  ({SramDw{1'b1}}),
     .a_rvalid_o (mem_a_rvalid),
     .a_rdata_o  (mem_a_rdata),
     .a_rerror_o (mem_a_rerror),
@@ -544,6 +553,7 @@ module spi_device #(
     .b_write_i  (mem_b_write),
     .b_addr_i   (mem_b_addr),
     .b_wdata_i  (mem_b_wdata),
+    .b_wmask_i  ({SramDw{1'b1}}),
     .b_rvalid_o (mem_b_rvalid),
     .b_rdata_o  (mem_b_rdata),
     .b_rerror_o (mem_b_rerror),
@@ -570,7 +580,7 @@ module spi_device #(
 
   // make sure scanmode_i is never X (including during reset)
   `ASSERT_KNOWN(scanmodeKnown, scanmode_i, clk_i, 0)
-  `ASSERT_KNOWN(CioMisoEnOKnown, cio_miso_en_o)
+  `ASSERT_KNOWN(CioSdoEnOKnown, cio_sdo_en_o)
 
   `ASSERT_KNOWN(IntrRxfOKnown,         intr_rxf_o        )
   `ASSERT_KNOWN(IntrRxlvlOKnown,       intr_rxlvl_o      )

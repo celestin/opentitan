@@ -13,33 +13,29 @@
 `include "prim_assert.sv"
 
 module rv_dm #(
-  parameter int                 NrHarts = 1,
-  parameter logic [31:0]        IdcodeValue = 32'h 0000_0001
+  parameter int              NrHarts = 1,
+  parameter logic [31:0]     IdcodeValue = 32'h 0000_0001
 ) (
-  input  logic                  clk_i,       // clock
-  input  logic                  rst_ni,      // asynchronous reset active low, connect PoR
-                                             // here, not the system reset
-  input  logic                  testmode_i,
-  output logic                  ndmreset_o,  // non-debug module reset
-  output logic                  dmactive_o,  // debug module is active
-  output logic [NrHarts-1:0]    debug_req_o, // async debug request
-  input  logic [NrHarts-1:0]    unavailable_i, // communicate whether the hart is unavailable
-                                               // (e.g.: power down)
+  input  logic               clk_i,       // clock
+  input  logic               rst_ni,      // asynchronous reset active low, connect PoR
+                                          // here, not the system reset
+  input  logic               testmode_i,
+  output logic               ndmreset_o,  // non-debug module reset
+  output logic               dmactive_o,  // debug module is active
+  output logic [NrHarts-1:0] debug_req_o, // async debug request
+  input  logic [NrHarts-1:0] unavailable_i, // communicate whether the hart is unavailable
+                                            // (e.g.: power down)
 
   // bus device with debug memory, for an execution based technique
-  input  tlul_pkg::tl_h2d_t tl_d_i,
-  output tlul_pkg::tl_d2h_t tl_d_o,
+  input  tlul_pkg::tl_h2d_t  tl_d_i,
+  output tlul_pkg::tl_d2h_t  tl_d_o,
 
   // bus host, for system bus accesses
   output tlul_pkg::tl_h2d_t  tl_h_o,
   input  tlul_pkg::tl_d2h_t  tl_h_i,
 
-  input  logic               tck_i,           // JTAG test clock pad
-  input  logic               tms_i,           // JTAG test mode select pad
-  input  logic               trst_ni,         // JTAG test reset pad
-  input  logic               td_i,            // JTAG test data input pad
-  output logic               td_o,            // JTAG test data output pad
-  output logic               tdo_oe_o         // Data out output enable
+  input  jtag_pkg::jtag_req_t jtag_req_i,
+  output jtag_pkg::jtag_rsp_t jtag_rsp_o
 );
 
   `ASSERT_INIT(paramCheckNrHarts, NrHarts > 0)
@@ -155,29 +151,29 @@ module rv_dm #(
     .sberror_i               ( sberror               )
   );
 
-  logic                   master_req;
-  logic   [BusWidth-1:0]  master_add;
-  logic                   master_we;
-  logic   [BusWidth-1:0]  master_wdata;
-  logic [BusWidth/8-1:0]  master_be;
-  logic                   master_gnt;
-  logic                   master_r_valid;
-  logic   [BusWidth-1:0]  master_r_rdata;
-  logic                   master_r_err;
+  logic                   host_req;
+  logic   [BusWidth-1:0]  host_add;
+  logic                   host_we;
+  logic   [BusWidth-1:0]  host_wdata;
+  logic [BusWidth/8-1:0]  host_be;
+  logic                   host_gnt;
+  logic                   host_r_valid;
+  logic   [BusWidth-1:0]  host_r_rdata;
+  logic                   host_r_err;
 
   dm_sba #(
     .BusWidth(BusWidth)
   ) i_dm_sba (
     .clk_i                   ( clk_i                 ),
     .rst_ni                  ( rst_ni                ),
-    .master_req_o            ( master_req            ),
-    .master_add_o            ( master_add            ),
-    .master_we_o             ( master_we             ),
-    .master_wdata_o          ( master_wdata          ),
-    .master_be_o             ( master_be             ),
-    .master_gnt_i            ( master_gnt            ),
-    .master_r_valid_i        ( master_r_valid        ),
-    .master_r_rdata_i        ( master_r_rdata        ),
+    .master_req_o            ( host_req              ),
+    .master_add_o            ( host_add              ),
+    .master_we_o             ( host_we               ),
+    .master_wdata_o          ( host_wdata            ),
+    .master_be_o             ( host_be               ),
+    .master_gnt_i            ( host_gnt              ),
+    .master_r_valid_i        ( host_r_valid          ),
+    .master_r_rdata_i        ( host_r_rdata          ),
     .dmactive_i              ( dmactive_o            ),
     .sbaddress_i             ( sbaddress_csrs_sba    ),
     .sbaddress_o             ( sbaddress_sba_csrs    ),
@@ -201,21 +197,21 @@ module rv_dm #(
   ) tl_adapter_host_sba (
     .clk_i,
     .rst_ni,
-    .req_i        (master_req),
-    .gnt_o        (master_gnt),
-    .addr_i       (master_add),
-    .we_i         (master_we),
-    .wdata_i      (master_wdata),
-    .be_i         (master_be),
-    .valid_o      (master_r_valid),
-    .rdata_o      (master_r_rdata),
-    .err_o        (master_r_err),
+    .req_i        (host_req),
+    .gnt_o        (host_gnt),
+    .addr_i       (host_add),
+    .we_i         (host_we),
+    .wdata_i      (host_wdata),
+    .be_i         (host_be),
+    .valid_o      (host_r_valid),
+    .rdata_o      (host_r_rdata),
+    .err_o        (host_r_err),
     .tl_o         (tl_h_o),
     .tl_i         (tl_h_i)
   );
 
   // DBG doesn't handle error responses so raise assertion if we see one
-  `ASSERT(dbgNoErrorResponse, master_r_valid |-> !master_r_err)
+  `ASSERT(dbgNoErrorResponse, host_r_valid |-> !host_r_err)
 
   localparam int unsigned AddressWidthWords = BusWidth - $clog2(BusWidth/8);
 
@@ -239,7 +235,13 @@ module rv_dm #(
   dm_mem #(
     .NrHarts(NrHarts),
     .BusWidth(BusWidth),
-    .SelectableHarts(SelectableHarts)
+    .SelectableHarts(SelectableHarts),
+    // The debug module provides a simplified ROM for systems that map the debug ROM to offset 0x0
+    // on the system bus. In that case, only one scratch register has to be implemented in the core.
+    // However, we require that the DM can be placed at arbitrary offsets in the system, which
+    // requires the generalized debug ROM implementation and two scratch registers. We hence set
+    // this parameter to a non-zero value (inside dm_mem, this just feeds into a comparison with 0).
+    .DmBaseAddress(1)
   ) i_dm_mem (
     .clk_i                   ( clk_i                 ),
     .rst_ni                  ( rst_ni                ),
@@ -287,12 +289,12 @@ module rv_dm #(
     .dmi_resp_valid_i (dmi_rsp_valid),
 
     //JTAG
-    .tck_i,
-    .tms_i,
-    .trst_ni,
-    .td_i,
-    .td_o,
-    .tdo_oe_o
+    .tck_i            (jtag_req_i.tck),
+    .tms_i            (jtag_req_i.tms),
+    .trst_ni          (jtag_req_i.trst_n),
+    .td_i             (jtag_req_i.tdi),
+    .td_o             (jtag_rsp_o.tdo),
+    .tdo_oe_o         (jtag_rsp_o.tdo_oe)
   );
 `endif
 

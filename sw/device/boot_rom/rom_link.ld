@@ -16,11 +16,7 @@ GROUP(-lgcc)
  */
 __DYNAMIC = 0;
 
-MEMORY {
-  rom(rx)   : ORIGIN = 0x00008000, LENGTH = 0x4000
-  ram(w)    : ORIGIN = 0x10000000, LENGTH = 0x10000
-  flash(rx) : ORIGIN = 0x20000000, LENGTH = 0x100000
-}
+INCLUDE hw/top_earlgrey/sw/autogen/top_earlgrey_memory.ld
 
 /**
  * The boot address, which indicates the location of the initial interrupt
@@ -28,13 +24,11 @@ MEMORY {
  */
 _boot_address = ORIGIN(rom);
 
-/* Reserving 32 bytes at the top of the RAM for test utils. */
-_test_reserved_size = 0x20;
 _heap_size = 0xe000;
-_stack_size = 0x2000 - _test_reserved_size;
-_stack_start = ORIGIN(ram) + _heap_size + _stack_size;
-_stack_end   = ORIGIN(ram) + _heap_size;
-_flash_start = ORIGIN(flash);
+_stack_size = LENGTH(ram_main) - _heap_size;
+_stack_end = ORIGIN(ram_main) + LENGTH(ram_main);
+_stack_start = _stack_end - _stack_size;
+_flash_start = ORIGIN(eflash);
 
 /**
  * This symbol points at the header of the flash binary, which contains loading
@@ -47,6 +41,16 @@ _flash_header = _flash_start;
 
 _chip_info_size = 128;
 _chip_info_start = ORIGIN(rom) + LENGTH(rom) - _chip_info_size;
+
+/* DV Log offset (has to be different to other boot stages). */
+_dv_log_offset = 0x0;
+
+/**
+ * We define an entry point only for documentation purposes (and to stop LLD
+ * erroring). In reality, we don't use this information within the ROM image, as
+ * we start at a fixed offset.
+ */
+ENTRY(_reset_start);
 
 /**
  * NOTE: We have to align each section to word boundaries as our current
@@ -61,7 +65,6 @@ SECTIONS {
    */
   .vectors _boot_address : ALIGN(4) {
     KEEP(*(.vectors))
-    *(.vectors)
   } > rom
 
   /**
@@ -69,7 +72,6 @@ SECTIONS {
    */
   .crt : ALIGN(4) {
     KEEP(*(.crt))
-    *(.crt)
   } > rom
 
   /**
@@ -105,7 +107,7 @@ SECTIONS {
    * Standard mutable data section, at the bottom of RAM. This will be
    * initialized from the .idata section at runtime by the CRT.
    */
-  .data ORIGIN(ram): AT(_data_init_start) ALIGN(4) {
+  .data ORIGIN(ram_main): AT(_data_init_start) ALIGN(4) {
     _data_start = .;
     __global_pointer$ = . + 2048;
 
@@ -120,8 +122,9 @@ SECTIONS {
      */
     *(.data)
     *(.data.*)
+    . = ALIGN(4);
     _data_end = .;
-  } > ram
+  } > ram_main
 
   /**
    * Immutable chip_info data, containing build-time-recorded information.
@@ -141,41 +144,9 @@ SECTIONS {
     *(.sbss.*)
     *(.bss)
     *(.bss.*)
-    *(COMMON)
+    . = ALIGN(4);
     _bss_end = .;
-  } > ram
+  } > ram_main
 
-  /**
-   * STAB debug table.
-   */
-  .stab 0x0 (NOLOAD): {
-    [.stab]
-  }
-
-  /**
-   * STAB debug strings.
-   */
-  .stabstr 0x0 (NOLOAD): {
-    [.stabstr]
-  }
-
-  /**
-   * The following sections are used by DV to implement logging in an
-   * alternate way, which enables simulation speed up by completely avoiding
-   * any string format processing or even the actual transmission of log data
-   * to a real peripheral.
-   *
-   * These sections are marked as dummy so that they can still be extracted
-   * using readelf or similar utilities. As such, the content in these sections
-   * is not relevant for the actual SW code and can be safely discarded.
-   */
-
-  /**
-   * The following section contains log fields constructed from the logs using
-   * the log_fields_t struct defined in sw/device/lib/base/log.h. The size of
-   * each log field is fixed - 20 bytes, which is used as the delimiter.
-   */
-  .logs.fields 0x0 (DSECT): {
-    *(.logs.fields)
-  }
+  INCLUDE sw/device/info_sections.ld
 }

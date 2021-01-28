@@ -1,4 +1,4 @@
-IBEX_CONFIG ?= small-3cmult
+IBEX_CONFIG ?= small
 
 FUSESOC_CONFIG_OPTS = $(shell ./util/ibex_config.py $(IBEX_CONFIG) fusesoc_opts)
 
@@ -111,3 +111,7 @@ run-csr-test: | $(Vtb_cs_registers)
 .PHONY: test-cfg
 test-cfg:
 	@echo $(FUSESOC_CONFIG_OPTS)
+
+.PHONY: python-lint
+python-lint:
+	$(MAKE) -C util lint

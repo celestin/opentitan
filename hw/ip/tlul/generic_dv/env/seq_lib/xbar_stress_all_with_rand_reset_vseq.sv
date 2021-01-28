@@ -28,7 +28,7 @@ class xbar_stress_all_with_rand_reset_vseq extends xbar_base_vseq;
         begin : seq_wo_reset
           xbar_vseq = xbar_stress_all_vseq::type_id::create("xbar_stress_all_vseq");
 
-          xbar_vseq.do_dut_init = 0;
+          xbar_vseq.do_apply_reset = 0;
           xbar_vseq.set_sequencer(p_sequencer);
           `DV_CHECK_RANDOMIZE_FATAL(xbar_vseq)
           xbar_vseq.start(p_sequencer);
@@ -47,7 +47,8 @@ class xbar_stress_all_with_rand_reset_vseq extends xbar_base_vseq;
                                              };)
           cfg.clk_rst_vif.wait_clks(delay);
           reset_ongoing = 1;
-          apply_reset("HARD");
+          // reset needs to be longger than any clocks to allow TLUL driver flash out all items
+          cfg.clk_rst_vif.apply_reset(.reset_width_clks($urandom_range(100, 200)));
           reset_ongoing = 0;
           `uvm_info(`gfn, $sformatf("Reset is issued for run %0d/%0d", i, num_trans), UVM_LOW)
         end

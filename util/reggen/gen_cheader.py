@@ -95,12 +95,6 @@ def gen_cdefine_register(outstr, reg, comp, width, rnames, existing_defines):
     defname = as_define(comp + '_' + rname)
     genout(
         outstr,
-        gen_define(
-            defname, ['id'],
-            '(' + as_define(comp) + '##id##_BASE_ADDR + ' + hex(offset) + ')',
-            existing_defines))
-    genout(
-        outstr,
         gen_define(defname + '_REG_OFFSET', [], hex(offset), existing_defines))
 
     for field in reg['fields']:
@@ -110,8 +104,10 @@ def gen_cdefine_register(outstr, reg, comp, width, rnames, existing_defines):
 
         if field['bitinfo'][1] == 1:
             # single bit
-            genout(outstr,
-                   gen_define(dname, [], str(fieldlsb), existing_defines))
+            genout(
+                outstr,
+                gen_define(dname + '_BIT', [], str(fieldlsb),
+                           existing_defines))
         else:
             # multiple bits (unless it is the whole register)
             if field['bitinfo'][1] != width:
@@ -124,14 +120,21 @@ def gen_cdefine_register(outstr, reg, comp, width, rnames, existing_defines):
                     outstr,
                     gen_define(dname + '_OFFSET', [], str(fieldlsb),
                                existing_defines))
+                genout(
+                    outstr,
+                    gen_define(
+                        dname + '_FIELD', [],
+                        '((bitfield_field32_t) {{ .mask = {dname}_MASK, .index = {dname}_OFFSET }})'
+                        .format(dname=dname), existing_defines))
             if 'enum' in field:
                 for enum in field['enum']:
                     ename = as_define(enum['name'])
+                    value = hex(int(enum['value'], 0))
                     genout(
                         outstr,
                         gen_define(
-                            defname + '_' + as_define(field['name']) + '_' +
-                            ename, [], enum['value'], existing_defines))
+                            defname + '_' + as_define(field['name']) +
+                            '_VALUE_' + ename, [], value, existing_defines))
     genout(outstr, '\n')
     return
 
@@ -142,12 +145,6 @@ def gen_cdefine_window(outstr, win, comp, regwidth, rnames, existing_defines):
 
     genout(outstr, format_comment('Memory area: ' + first_line(win['desc'])))
     defname = as_define(comp + '_' + wname)
-    genout(
-        outstr,
-        gen_define(
-            defname, ['id'],
-            '(' + as_define(comp) + '##id##_BASE_ADDR + ' + hex(offset) + ')',
-            existing_defines))
     genout(
         outstr,
         gen_define(defname + '_REG_OFFSET', [], hex(offset), existing_defines))
@@ -169,6 +166,11 @@ def gen_cdefine_window(outstr, win, comp, regwidth, rnames, existing_defines):
 
 def gen_cdefines_module_param(outstr, param, module_name, existing_defines):
     param_type = param['type']
+
+    # Do not generate C defines for parameters that are not localparams defined
+    # in the corresponding SystemVerilog package.
+    if param["local"].lower() == "false":
+        return
 
     # Presently there is only one type (int), however if the new types are
     # added, they potentially need to be handled differently.
@@ -253,8 +255,9 @@ def gen_cdefines_interrupt_field(outstr, interrupt, component, regwidth,
 
     if interrupt['bitinfo'][1] == 1:
         # single bit
-        genout(outstr, gen_define(defname, [], str(fieldlsb),
-                                  existing_defines))
+        genout(
+            outstr,
+            gen_define(defname + '_BIT', [], str(fieldlsb), existing_defines))
     else:
         # multiple bits (unless it is the whole register)
         if interrupt['bitinfo'][1] != regwidth:
@@ -266,6 +269,12 @@ def gen_cdefines_interrupt_field(outstr, interrupt, component, regwidth,
                 outstr,
                 gen_define(defname + '_OFFSET', [], str(fieldlsb),
                            existing_defines))
+            genout(
+                outstr,
+                gen_define(
+                    defname + '_FIELD', [],
+                    '((bitfield_field32_t) {{ .mask = {dname}_MASK, .index = {dname}_OFFSET }})'
+                    .format(dname=defname), existing_defines))
 
 
 def gen_cdefines_interrupts(outstr, regs, component, regwidth,
@@ -357,10 +366,26 @@ def gen_cdefines(regs, outfile, src_lic, src_copy):
         for line in src_lic.splitlines():
             genout(outfile, '// ' + line + '\n')
         genout(outfile, '\n')
+
+    # Header Include Guard
     genout(outfile, '#ifndef _' + as_define(component) + '_REG_DEFS_\n')
     genout(outfile, '#define _' + as_define(component) + '_REG_DEFS_\n\n')
+
+    # Header Extern Guard (so header can be used from C and C++)
+    genout(outfile, '#ifdef __cplusplus\n')
+    genout(outfile, 'extern "C" {\n')
+    genout(outfile, '#endif\n')
+
     genout(outfile, generated)
+
+    # Header Extern Guard
+    genout(outfile, '#ifdef __cplusplus\n')
+    genout(outfile, '}  // extern "C"\n')
+    genout(outfile, '#endif\n')
+
+    # Header Include Guard
     genout(outfile, '#endif  // _' + as_define(component) + '_REG_DEFS_\n')
+
     genout(outfile, '// End generated register defines for ' + component)
 
     return

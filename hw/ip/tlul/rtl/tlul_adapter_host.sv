@@ -14,10 +14,10 @@
 // required by TL-UL (every bit in mask set).
 //
 // When MAX_REQS > 1 tlul_adapter_host does not do anything to order responses from the TL-UL
-// interface which could return them out of order. It is the host's responsibility to either only have
-// outstanding requests to an address space it knows will return responses in order or to not care
-// about out of order responses (note that if read data is returned out of order there is no way to
-// determine this)
+// interface which could return them out of order. It is the host's responsibility to either only
+// have outstanding requests to an address space it knows will return responses in order or to not
+// care about out of order responses (note that if read data is returned out of order there is no
+// way to determine this).
 
 `include "prim_assert.sv"
 
@@ -50,6 +50,7 @@ module tlul_adapter_host #(
     assign tl_source = '0;
   end else begin : g_multiple_reqs
     localparam int ReqNumW  = $clog2(MAX_REQS);
+    localparam int unsigned MaxSource = MAX_REQS - 1;
 
     logic [ReqNumW-1:0] source_d;
     logic [ReqNumW-1:0] source_q;
@@ -66,7 +67,7 @@ module tlul_adapter_host #(
       source_d = source_q;
 
       if (req_i && gnt_o) begin
-        if (source_q == MAX_REQS - 1) begin
+        if (source_q == MaxSource[ReqNumW-1:0]) begin
           source_d = '0;
         end else  begin
           source_d = source_q + 1;
@@ -97,14 +98,24 @@ module tlul_adapter_host #(
     d_ready:   1'b1
   };
 
-  assign gnt_o   = tl_i.a_ready & req_i;
+  assign gnt_o   = tl_i.a_ready;
 
   assign valid_o = tl_i.d_valid;
   assign rdata_o = tl_i.d_data;
   assign err_o   = tl_i.d_error;
 
+  // Addresses are assumed to be word-aligned, and the bottom bits are ignored
+  logic unused_addr_bottom_bits;
+  assign unused_addr_bottom_bits = ^addr_i[WordSize-1:0];
+
+  // Explicitly ignore unused fields of tl_i
+  logic unused_tl_i_fields;
+  assign unused_tl_i_fields = ^{tl_i.d_opcode, tl_i.d_param,
+                                tl_i.d_size, tl_i.d_source, tl_i.d_sink,
+                                tl_i.d_user};
+
 `ifdef INC_ASSERT
-  localparam OutstandingReqCntW =
+  localparam int OutstandingReqCntW =
     (MAX_REQS == 2 ** $clog2(MAX_REQS)) ? $clog2(MAX_REQS) + 1 : $clog2(MAX_REQS);
 
   logic [OutstandingReqCntW-1:0] outstanding_reqs_q;

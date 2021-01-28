@@ -2,6 +2,22 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
+// VCS does not support overriding enum and string parameters via command line. Instead, a `define
+// is used that can be set from the command line. If no value has been specified, this gives a
+// default. Other simulators don't take the detour via `define and can override the corresponding
+// parameters directly.
+`ifndef RV32M
+  `define RV32M ibex_pkg::RV32MFast
+`endif
+
+`ifndef RV32B
+  `define RV32B ibex_pkg::RV32BNone
+`endif
+
+`ifndef RegFile
+  `define RegFile ibex_pkg::RegFileFF
+`endif
+
 /**
  * Ibex simple system
  *
@@ -19,27 +35,35 @@ module ibex_simple_system (
   input IO_RST_N
 );
 
-  parameter bit RV32E                    = 1'b0;
-  parameter bit RV32M                    = 1'b1;
-  parameter bit RV32B                    = 1'b0;
-  parameter bit BranchTargetALU          = 1'b0;
-  parameter bit WritebackStage           = 1'b0;
-  parameter     MultiplierImplementation = "fast";
+  parameter bit                 SecureIbex               = 1'b0;
+  parameter bit                 PMPEnable                = 1'b0;
+  parameter int unsigned        PMPGranularity           = 0;
+  parameter int unsigned        PMPNumRegions            = 4;
+  parameter bit                 RV32E                    = 1'b0;
+  parameter ibex_pkg::rv32m_e   RV32M                    = `RV32M;
+  parameter ibex_pkg::rv32b_e   RV32B                    = `RV32B;
+  parameter ibex_pkg::regfile_e RegFile                  = `RegFile;
+  parameter bit                 BranchTargetALU          = 1'b0;
+  parameter bit                 WritebackStage           = 1'b0;
+  parameter bit                 ICache                   = 1'b0;
+  parameter bit                 ICacheECC                = 1'b0;
+  parameter bit                 BranchPredictor          = 1'b0;
+  parameter                     SRAMInitFile             = "";
 
   logic clk_sys = 1'b0, rst_sys_n;
 
-  typedef enum {
+  typedef enum logic {
     CoreD
   } bus_host_e;
 
-  typedef enum {
+  typedef enum logic[1:0] {
     Ram,
     SimCtrl,
     Timer
   } bus_device_e;
 
-  localparam NrDevices = 3;
-  localparam NrHosts = 1;
+  localparam int NrDevices = 3;
+  localparam int NrHosts = 1;
 
   // interrupts
   logic timer_irq;
@@ -138,15 +162,22 @@ module ibex_simple_system (
   );
 
   ibex_core_tracing #(
-      .MHPMCounterNum           ( 29                       ),
-      .DmHaltAddr               ( 32'h00100000             ),
-      .DmExceptionAddr          ( 32'h00100000             ),
-      .RV32E                    ( RV32E                    ),
-      .RV32M                    ( RV32M                    ),
-      .RV32B                    ( RV32B                    ),
-      .BranchTargetALU          ( BranchTargetALU          ),
-      .WritebackStage           ( WritebackStage           ),
-      .MultiplierImplementation ( MultiplierImplementation )
+      .SecureIbex      ( SecureIbex      ),
+      .PMPEnable       ( PMPEnable       ),
+      .PMPGranularity  ( PMPGranularity  ),
+      .PMPNumRegions   ( PMPNumRegions   ),
+      .MHPMCounterNum  ( 29              ),
+      .RV32E           ( RV32E           ),
+      .RV32M           ( RV32M           ),
+      .RV32B           ( RV32B           ),
+      .RegFile         ( RegFile         ),
+      .BranchTargetALU ( BranchTargetALU ),
+      .ICache          ( ICache          ),
+      .ICacheECC       ( ICacheECC       ),
+      .WritebackStage  ( WritebackStage  ),
+      .BranchPredictor ( BranchPredictor ),
+      .DmHaltAddr      ( 32'h00100000    ),
+      .DmExceptionAddr ( 32'h00100000    )
     ) u_core (
       .clk_i                 (clk_sys),
       .rst_ni                (rst_sys_n),
@@ -183,12 +214,15 @@ module ibex_simple_system (
       .debug_req_i           ('b0),
 
       .fetch_enable_i        ('b1),
+      .alert_minor_o         (),
+      .alert_major_o         (),
       .core_sleep_o          ()
     );
 
   // SRAM block for instruction and data storage
   ram_2p #(
-      .Depth(1024*1024/4)
+      .Depth(1024*1024/4),
+      .MemInitFile(SRAMInitFile)
     ) u_ram (
       .clk_i       (clk_sys),
       .rst_ni      (rst_sys_n),
@@ -243,12 +277,10 @@ module ibex_simple_system (
       .timer_intr_o   (timer_irq)
     );
 
-  // Expose the performance counter array so it's easy to access in
-  // a verilator siumulation
-  logic [63:0] mhpmcounter_vals [32] /*verilator public_flat*/;
+  export "DPI-C" function mhpmcounter_get;
 
-  for(genvar i = 0;i < 32; i = i + 1) begin
-      assign mhpmcounter_vals[i] = u_core.u_ibex_core.cs_registers_i.mhpmcounter[i];
-  end
+  function automatic longint mhpmcounter_get(int index);
+    return u_core.u_ibex_core.cs_registers_i.mhpmcounter[index];
+  endfunction
+
 endmodule
-

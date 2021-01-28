@@ -20,31 +20,51 @@ tl_device_t xbar_devices[$] = '{
         '{32'h20000000, 32'h2007ffff}
     }},
     '{"peri", '{
-        '{32'h40000000, 32'h40020fff},
-        '{32'h40080000, 32'h40080fff},
-        '{32'h400a0000, 32'h400bffff},
-        '{32'h40150000, 32'h40150fff}
+        '{32'h18000000, 32'h18000fff},
+        '{32'h40000000, 32'h40420fff},
+        '{32'h40500000, 32'h4051ffff}
     }},
     '{"flash_ctrl", '{
-        '{32'h40030000, 32'h40030fff}
+        '{32'h41000000, 32'h41000fff}
     }},
     '{"hmac", '{
-        '{32'h40120000, 32'h40120fff}
+        '{32'h41110000, 32'h41110fff}
+    }},
+    '{"kmac", '{
+        '{32'h41120000, 32'h41120fff}
     }},
     '{"aes", '{
-        '{32'h40110000, 32'h40110fff}
+        '{32'h41100000, 32'h41100fff}
+    }},
+    '{"entropy_src", '{
+        '{32'h41160000, 32'h41160fff}
+    }},
+    '{"csrng", '{
+        '{32'h41150000, 32'h41150fff}
+    }},
+    '{"edn0", '{
+        '{32'h41170000, 32'h41170fff}
+    }},
+    '{"edn1", '{
+        '{32'h41180000, 32'h41180fff}
     }},
     '{"rv_plic", '{
-        '{32'h40090000, 32'h40090fff}
+        '{32'h41010000, 32'h41010fff}
     }},
     '{"pinmux", '{
-        '{32'h40070000, 32'h40070fff}
+        '{32'h40460000, 32'h40460fff}
     }},
-    '{"alert_handler", '{
-        '{32'h40130000, 32'h40130fff}
+    '{"padctrl", '{
+        '{32'h40470000, 32'h40470fff}
     }},
-    '{"nmi_gen", '{
-        '{32'h40140000, 32'h40140fff}
+    '{"otbn", '{
+        '{32'h411d0000, 32'h411dffff}
+    }},
+    '{"keymgr", '{
+        '{32'h41130000, 32'h41130fff}
+    }},
+    '{"sram_ctrl_main", '{
+        '{32'h411c0000, 32'h411c0fff}
 }}};
 
   // List of Xbar hosts
@@ -63,11 +83,18 @@ tl_host_t xbar_hosts[$] = '{
         "peri",
         "flash_ctrl",
         "aes",
+        "entropy_src",
+        "csrng",
+        "edn0",
+        "edn1",
         "hmac",
         "rv_plic",
         "pinmux",
-        "alert_handler",
-        "nmi_gen"}}
+        "padctrl",
+        "otbn",
+        "keymgr",
+        "kmac",
+        "sram_ctrl_main"}}
     ,
     '{"dm_sba", 2, '{
         "rom",
@@ -76,9 +103,15 @@ tl_host_t xbar_hosts[$] = '{
         "peri",
         "flash_ctrl",
         "aes",
+        "entropy_src",
+        "csrng",
+        "edn0",
+        "edn1",
         "hmac",
         "rv_plic",
         "pinmux",
-        "alert_handler",
-        "nmi_gen"}}
+        "padctrl",
+        "otbn",
+        "kmac",
+        "sram_ctrl_main"}}
 };

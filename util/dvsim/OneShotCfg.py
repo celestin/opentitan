@@ -13,16 +13,17 @@ from collections import OrderedDict
 from Deploy import CompileOneShot
 from FlowCfg import FlowCfg
 from Modes import BuildModes, Modes
-from utils import find_and_substitute_wildcards
 
 
 class OneShotCfg(FlowCfg):
     """Simple one-shot build flow for non-simulation targets like
     linting, synthesis and FPV.
     """
-    def __init__(self, flow_cfg_file, proj_root, args):
-        super().__init__(flow_cfg_file, proj_root, args)
 
+    ignored_wildcards = (FlowCfg.ignored_wildcards +
+                         ['build_mode', 'index', 'test'])
+
+    def __init__(self, flow_cfg_file, hjson_data, args, mk_config):
         # Options set from command line
         self.tool = args.tool
         self.verbose = args.verbose
@@ -56,6 +57,7 @@ class OneShotCfg(FlowCfg):
         self.build_modes = []
         self.run_modes = []
         self.regressions = []
+        self.max_msg_count = -1
 
         # Flow results
         self.result = OrderedDict()
@@ -71,29 +73,24 @@ class OneShotCfg(FlowCfg):
         self.links = {}
         self.build_list = []
         self.deploy = []
+        self.cov = args.cov
 
-        # Parse the cfg_file file tree
-        self.parse_flow_cfg(flow_cfg_file)
-        self._post_parse_flow_cfg()
+        super().__init__(flow_cfg_file, hjson_data, args, mk_config)
 
+    def _merge_hjson(self, hjson_data):
         # If build_unique is set, then add current timestamp to uniquify it
         if self.build_unique:
             self.build_dir += "_" + self.timestamp
 
-        # Process overrides before substituting the wildcards.
-        self._process_overrides()
+        super()._merge_hjson(hjson_data)
 
-        # Make substitutions, while ignoring the following wildcards
-        # TODO: Find a way to set these in sim cfg instead
-        ignored_wildcards = ["build_mode", "index", "test"]
-        self.__dict__ = find_and_substitute_wildcards(self.__dict__,
-                                                      self.__dict__,
-                                                      ignored_wildcards)
+    def _expand(self):
+        super()._expand()
 
-        # Stuff below only pertains to individual cfg (not master cfg).
-        if not self.is_master_cfg:
-            # Print info
-            log.info("[scratch_dir]: [%s]: [%s]", self.name, self.scratch_path)
+        # Stuff below only pertains to individual cfg (not primary cfg).
+        if not self.is_primary_cfg:
+            # Print scratch_path at the start:
+            log.info("[scratch_path]: [%s] [%s]", self.name, self.scratch_path)
 
             # Set directories with links for ease of debug / triage.
             self.links = {
@@ -107,24 +104,9 @@ class OneShotCfg(FlowCfg):
             if not hasattr(self, "build_mode"):
                 setattr(self, "build_mode", "default")
 
-            self._process_exports()
-
             # Create objects from raw dicts - build_modes, sim_modes, run_modes,
-            # tests and regressions, only if not a master cfg obj
+            # tests and regressions, only if not a primary cfg obj
             self._create_objects()
-
-        # Post init checks
-        self.__post_init__()
-
-    def __post_init__(self):
-        # Run some post init checks
-        super().__post_init__()
-
-    @staticmethod
-    def create_instance(flow_cfg_file, proj_root, args):
-        '''Create a new instance of this class as with given parameters.
-        '''
-        return OneShotCfg(flow_cfg_file, proj_root, args)
 
     # Purge the output directories. This operates on self.
     def _purge(self):

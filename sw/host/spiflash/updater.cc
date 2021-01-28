@@ -4,18 +4,23 @@
 
 #include "sw/host/spiflash/updater.h"
 
-#include <assert.h>
-
 #include <algorithm>
+#include <assert.h>
+#include <unistd.h>
 
 namespace opentitan {
 namespace spiflash {
 namespace {
 
-// Populates frame |f| with |frame_number|, |code_offset|, and frame data
-// starting at |code_offset| from |code| buffer. Calculates SHA256 hash of
-// frame payload and it stores it in the frame header. Returns the number of
-// bytes loaded into the frame.
+/**
+ * Populate target frame `f`.
+ *
+ * Populates frame `f` with `frame_number`, `code_offset`, and frame data
+ * starting at `code_offset` from `code` buffer. Calculates SHA256 hash of
+ * frame payload and it stores it in the frame header.
+ *
+ * @return the number of bytes loaded into the frame.
+ */
 uint32_t Populate(uint32_t frame_number, uint32_t code_offset,
                   const std::string &code, Frame *f) {
   assert(f);
@@ -34,7 +39,9 @@ uint32_t Populate(uint32_t frame_number, uint32_t code_offset,
   return copy_size;
 }
 
-// Calculate hash for frame |f| and store it in the frame header hash field.
+/**
+ * Calculate hash for frame `f` and store it in the frame header hash field.
+ */
 void HashFrame(Frame *f) {
   SHA256_CTX sha256;
   SHA256_Init(&sha256);
@@ -71,6 +78,12 @@ bool Updater::Run() {
                              sizeof(Frame))) {
       std::cerr << "Failed to transmit frame no: 0x" << std::setfill('0')
                 << std::setw(8) << std::hex << f.hdr.frame_num << std::endl;
+    }
+
+    // After receiving and validating the first frame, the device is erasing
+    // the Flash.
+    if (current_frame == 0) {
+      usleep(options_.flash_erase_delay_us);
     }
 
     // When we send each frame we wait for the correct hash before continuing.

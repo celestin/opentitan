@@ -7,10 +7,10 @@
 # Parameter (given by Python tool)
 #  - n_dio_pads:      Number of dedicated IO pads
 #  - n_mio_pads:      Number of muxed IO pads
-#  - attr_dw:        Attribute datawidth
+#  - attr_dw:         Attribute datawidth
 {
   name: "PADCTRL",
-  clock_primary: "clk_fixed",
+  clock_primary: "clk_i",
   bus_device: "tlul",
   regwidth: "32",
   param_list: [
@@ -60,21 +60,30 @@
                   swaccess: "rw",
                   hwaccess: "hrw",
                   hwext:    "true",
+                  hwqe:     "true",
                   regwen:   "REGEN",
                   cname:    "ATTR",
                   fields: [
-                    { bits: "${attr_dw-1}:0",
+                    { bits: "9:0",
                       name: "ATTR",
-                      desc: '''Bit 0: input/output inversion,
-                               Bit 1: Virtual open drain enable.
-                               Bit 2: Pull-down enable.
-                               Bit 3: Pull-up enable.
-                               Bit 4: Keeper enable.
-                               Bit 5: Drive strength (0: strong, 1: weak).
+                      desc: '''Bit   0: input/output inversion,
+                               Bit   1: Virtual open drain enable.
+                               Bit   2: Pull enable.
+                               Bit   3: Pull select (0: pull down, 1: pull up).
+                               Bit   4: Keeper enable.
+                               Bit   5: Schmitt trigger enable.
+                               Bit   6: Slew rate (0: slow, 1: fast).
+                               Bit 7/8: Drive strength (00: weakest, 11: strongest).
+                               Bit   9: Reserved.
                       '''
                       resval: 0
                     }
-                  ]
+                  ],
+                  // these CSRs have WARL behavior and may not
+                  // read back the same value that was written to them.
+                  // further, they have hardware side effects since they drive the
+                  // pad attributes, and hence no random data should be written to them.
+                  tags: ["excl:CsrAllTests:CsrExclWrite"]
                 }
     },
 # muxed pads
@@ -86,24 +95,32 @@
                   swaccess: "rw",
                   hwaccess: "hrw",
                   hwext:    "true",
+                  hwqe:     "true",
                   regwen:   "REGEN",
                   cname:    "ATTR",
                   fields: [
-                    { bits: "${attr_dw-1}:0",
+                    { bits: "9:0",
                       name: "ATTR",
-                      desc: '''Bit 0: input/output inversion,
-                               Bit 1: Virtual open drain enable.
-                               Bit 2: Pull-down enable.
-                               Bit 3: Pull-up enable.
-                               Bit 4: Keeper enable.
-                               Bit 5: Drive strength (0: strong, 1: weak).
+                      desc: '''Bit   0: input/output inversion,
+                               Bit   1: Virtual open drain enable.
+                               Bit   2: Pull enable.
+                               Bit   3: Pull select (0: pull down, 1: pull up).
+                               Bit   4: Keeper enable.
+                               Bit   5: Schmitt trigger enable.
+                               Bit   6: Slew rate (0: slow, 1: fast).
+                               Bit 7/8: Drive strength (00: weakest, 11: strongest).
+                               Bit   9: Reserved.
                       '''
                       resval: 0
                     }
-                  ]
+                  ],
+                  // these CSRs have WARL behavior and may not
+                  // read back the same value that was written to them.
+                  // further, they have hardware side effects since they drive the
+                  // pad attributes, and hence no random data should be written to them.
+                  tags: ["excl:CsrAllTests:CsrExclWrite"]
                 }
     },
   ],
 }
-
 

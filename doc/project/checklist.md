@@ -11,11 +11,15 @@ For a transition from D0 to D1, the following items are expected be completed.
 
 ### SPEC_COMPLETE
 
-Spec complete, feature set finalized.
+Specification mostly (90%) complete, all features are defined.
+Specification is submitted into the repo as a markdown document.
+It is acceptable to make changes for further clarification or more details after the D1 stage.
 
 ### CSR_DEFINED
 
-CSRs defined and generated.
+The CSRs required to implement the primary programming model are defined.
+The Hjson file defining the CSRs is checked into the repository.
+It is acceptable to add or modify registers during the D2 stage in order to complete implementation.
 
 ### CLKRST_CONNECTED
 
@@ -28,15 +32,19 @@ Unit `.sv` exists, meet comportability requirements.
 ### IP_INSTANTIABLE
 
 Unit is able to be instantiated and bound in top level RTL.
+The design must compile and elaborate cleanly without errors.
 The unit must not break top level functionality such as propagating X through TL-UL interface, continuously asserting the interrupts, or creating undesired TL-UL transactions.
 
-### MEM_INSTANCED_80
+### PHYSICAL_MACROS_DEFINED_80
 
-80% of expected memories instantiated, using behavioral RAMs.
+All expected memories identified, representative macros instantiated.
+All other physical elements (analog components, pads, etc) are identified and represented with a behavioral model.
+It is acceptable to make changes to these physical macros after the D1 stage as long as they do not have a large impact on the expected resulting area (roughly "80% accurate").
 
 ### FUNC_IMPLEMENTED
 
-Main functional path implemented.
+Mainline functional path is implemented to allow for a basic functionality test by verification.
+("Feature complete" is the target for D2 status.)
 
 ### ASSERT_KNOWN_ADDED
 
@@ -52,7 +60,7 @@ warnings at this stage.
 ### NEW_FEATURES
 
 Any new features added since D1 are documented, reviewed with DV/SW/FPGA.
-Github Issue for RFC should be linked in `Notes` section.
+The GitHub Issue, Pull Request, or RFC where the feature was discussed should be linked in the `Notes` section.
 
 ### BLOCK_DIAGRAM
 
@@ -74,9 +82,9 @@ Feature requests for this IP version are frozen at this time.
 
 All features specified have been completed.
 
-### AREA_SANITY_CHECK
+### AREA_CHECK
 
-Area sanity check completed either on FPGA or on Design Compiler.
+Area check completed either on FPGA or on Design Compiler.
 
 ### PORT_FROZEN
 
@@ -92,7 +100,7 @@ Review and sign off TODOs.
 
 ### STYLE_X
 
-Confirming to style guide regarding X usage. TODO: Related GitHub issue.
+Conforming to [style guide regarding X usage](https://github.com/lowRISC/style-guides/blob/master/VerilogCodingStyle.md#dont-cares-xs).
 
 ### LINT_PASS
 
@@ -110,6 +118,26 @@ FPGA synthesis timing meet (Fmax-10%) target or better
 
 CDC Sync flops use behavioral synchronization macros(`prim_flop_2sync`) not
 2flops.
+
+### SEC_CM_IMPLEMENTED
+
+Any appropriate security counter-measures documented and implemented.
+For redundantly encoded FSMs, [the sparse-fsm-encode.py script](https://github.com/lowRISC/opentitan/blob/master/util/design/sparse-fsm-encode.py) must be used to generate the encoding.
+
+### SEC_NON_RESET_FLOPS
+
+A review of sensitive security-critical storage flops was completed.
+Where appropriate, non-reset flops are used to store secure material.
+
+### SEC_SHADOW_REGS
+
+Shadow registers are implemented for all appropriate storage of critical control functions.
+
+### SEC_RND_CNST
+
+Compile-time random netlist constants (such as LFSR seeds or scrambling constants) are exposed to topgen via the `randtype` parameter mechanism in the comportable IP Hjson file.
+Default random seeds and permutations for LFSRs can be generated with [the gen-lfsr-seed.py script](https://github.com/lowRISC/opentitan/blob/master/util/design/gen-lfsr-seed.py).
+See also the related [GitHub issue #2229](https://github.com/lowRISC/opentitan/issues/2229).
 
 ## D3
 
@@ -158,14 +186,15 @@ Review Design Change with SW: Review known "Won't Fix" bugs and "Errata".
 For a transition from V0 to V1, the following items are expected be completed.
 Prefix "SIM" is applicable for simulation-based DV approach only, while "FPV" is for FPV approach only.
 
-### DV_PLAN_DRAFT_COMPLETED
+### DV_DOC_DRAFT_COMPLETED
 
-- DV Plan document drafted, indicating the overall DV strategy, intent and the testbench environment details with diagrams, details on TB, UVCs, checkers, scoreboard, interfaces, assertions, coverage objects (if applicable).
+- DV document drafted, indicating the overall DV strategy, intent and the testbench environment details with diagrams, details on TB, UVCs, checkers, scoreboard, interfaces, assertions, coverage objects (if applicable).
 - Details may be missing since most items are not expected to be fully developed at this stage.
 
-### TESTPLAN_COMPLETED
+### DV_PLAN_COMPLETED
 
-A fully completed Testplan written in Hjson, indicating the list of planned tests with descriptions indicating the goal of the test and optionally details on stimulus and the checking procedure.
+A fully completed DV plan written in Hjson, indicating the list of planned tests with descriptions indicating the goal of the test and optionally details on stimulus and the checking procedure.
+A fully completed functional coverage plan written in Hjson, indicating the list of functional coverage points and coverage crosses with a description of what feature is covered by this coverpoint.
 
 ### TB_TOP_CREATED
 
@@ -196,7 +225,7 @@ Full testbench automation completed if applicable. This may be required for veri
 ### SIM_SANITY_TEST_PASSING
 
 - Sanity test exercising a basic functionality of a major DUT datapath passing.
-- What functionality to test and to what level may be governed by higher level (example: chip) integration requirements. These are to be captured when the Testplan is reviewed with the key stakeholders.
+- What functionality to test and to what level may be governed by higher level (example: chip) integration requirements. These are to be captured when the DV plan is reviewed with the key stakeholders.
 
 ### SIM_CSR_MEM_TEST_SUITE_PASSING
 
@@ -241,17 +270,23 @@ Set up FPV regression by adding the module to `hw/formal/fpv_all` script.
 
 Sub-modules that are pre-verified with their own testbenches have already reached V1 or higher stage.
 
+### TB_LINT_SETUP
+
+[VeribleLint](https://google.github.io/verible/verilog_lint.html) for the testbench is [setup]({{< relref "hw/lint/doc/README.md" >}}) to run in nightly regression, with appropriate waivers.
+* For DV testbench, an entry is expected to be added at `hw/<top-level-design>/lint/<top-level-design>_dv_lint_cfgs.hjson`
+* For FPV testbench, an entry is expected to be added at `hw/<top-level-design>/lint/<top-level-design>_fpv_lint_cfgs.hjson`
+
 ### DESIGN_SPEC_REVIEWED
 
 RTL (uArch) specification reviewed and signed off.
 
-### DV_PLAN_TESTPLAN_REVIEWED
+### DV_PLAN_REVIEWED
 
-DV Plan & Testplan reviewed with key stakeholders - designer, design lead, DV lead, architects, higher level (chip) design and DV leads.
+DV document & DV plan reviewed with key stakeholders - designer, design lead, DV lead, architects, higher level (chip) design and DV leads.
 
 ### STD_TEST_CATEGORIES_PLANNED
 
-Following categories of post-V1 tests focused at in the Testplan review (as applicable):
+Following categories of post-V1 tests focused at in the DV plan review (as applicable):
 - Security/error
 - Power
 - Performance
@@ -269,11 +304,15 @@ Prefix "SIM" is applicable for simulation-based DV approach only, while "FPV" is
 
 ### DESIGN_DELTAS_CAPTURED_V2
 
-It is possible for the design to have undergone some changes since the DV plan and Testplan was reviewed prior to V1 stage. Please ensure that those deltas have been captured adequately in the DV Plan and the Testplan documents.
+It is possible for the design to have undergone some changes since the DV document and DV plan was reviewed prior to V1 stage. Please ensure that those deltas have been captured adequately in the DV document and the DV plan documents.
 
-### DV_PLAN_COMPLETED
+### DV_DOC_COMPLETED
 
-DV Plan is fully completed in terms of content.
+DV document is fully completed in terms of content.
+
+### FUNCTIONAL_COVERAGE_PLAN_IMPLEMENTED
+
+All coverage points have been written and implemented
 
 ### ALL_INTERFACES_EXERCISED
 
@@ -290,7 +329,7 @@ UVM environment fully developed with end-2-end checks in scoreboard enabled.
 
 ### SIM_ALL_TESTS_PASSING
 
-All tests in the Testplan written and passing with at least one random seed.
+All tests in the DV plan written and passing with at least one random seed.
 
 ### FPV_ALL_ASSERTIONS_WRITTEN
 
@@ -326,6 +365,10 @@ Code coverage requirements: branch, statement, functional: 90%
 
 COI coverage requirements: 75%
 
+### TB_LINT_PASS
+
+Lint for the testbench passes. Waiver reviewed.
+
 ### NO_HIGH_PRIORITY_ISSUES_PENDING
 
 Ensure that all high priority (tagged P0 and P1) design bugs have been addressed and closed. If the bugs were found elsewhere, ensure that they are reproduced deterministically in DV (through additional tests or by tweaking existing tests as needed) and the fixes are adequately verified.
@@ -349,7 +392,7 @@ Prefix "SIM" is applicable for simulation-based DV approach only, while "FPV" is
 
 ### DESIGN_DELTAS_CAPTURED_V3
 
-It is possible for the design to undergo changes even at this stage (when it is expected to be mature). Please ensure that those new deltas have been captured adequately in the DV Plan and the Testplan documents.
+It is possible for the design to undergo changes even at this stage (when it is expected to be mature). Please ensure that those new deltas have been captured adequately in the DV document and the DV plan documents.
 
 ### ALL_TODOS_RESOLVED
 
@@ -392,6 +435,10 @@ Ensure that all design bugs have been addressed and closed.
 
 Clean up all compile-time and run-time warnings thrown by the simulator.
 
+### TB_LINT_COMPLETE
+
+Lint for the testbench is clean. Lint waiver file reviewed and signed off by tech steering committe.
+
 ### PRE_VERIFIED_SUB_MODULES_V3
 
 Sub-modules that are pre-verified with their own testbenches have already reached V3 stage.
@@ -413,14 +460,14 @@ There is no remaining driver code that directly uses the device outside of DIF c
 
 Software unit tests exist for the DIF in `sw/device/tests/dif` named `dif_<ip>_unittest.cc`.
 
-### DIF_TEST_SANITY
+### DIF_TEST_SMOKE
 
-Sanity tests exist for the DIF in `sw/device/tests/dif` named `dif_<ip>_sanitytest.c`.
+Smoke tests exist for the DIF in `sw/device/tests/dif` named `dif_<ip>_smoketest.c`.
 
 This should perform a basic test of the main datapath of the hardware module by the embedded core, via the DIF, and should be able to be run on all OpenTitan platforms (including FPGA, simulation, and DV).
 This test will be shared with DV.
 
-Sanity tests are for diagnosing major issues in both software and hardware, and with this in mind, they should execute quickly.
+Smoke tests are for diagnosing major issues in both software and hardware, and with this in mind, they should execute quickly.
 Initially we expect this kind of test to be written by hardware designers for debugging issues during module development.
 This happens long before a DIF is implemented, so there are no requirements on how these should work, though we suggest they are placed in `sw/device/tests/<ip>/<ip>.c` as this has been the convention until now.
 Later, when a DIF is written, the DIF author is responsible for updating this test to use the DIF, and for moving this test into the aforementioned location.

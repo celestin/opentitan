@@ -11,7 +11,7 @@ class alert_handler_stress_all_vseq extends alert_handler_base_vseq;
 
   task body();
     bit entropy_test_flag; // this flag ensures entropy test only runs once due to its long runtime
-    string seq_names[] = {"alert_handler_sanity_vseq",
+    string seq_names[] = {"alert_handler_smoke_vseq",
                           "alert_handler_random_alerts_vseq",
                           "alert_handler_random_classes_vseq",
                           "alert_handler_esc_intr_timeout_vseq",
@@ -28,10 +28,16 @@ class alert_handler_stress_all_vseq extends alert_handler_base_vseq;
       seq = create_seq_by_name(seq_names[seq_idx]);
       `downcast(alert_vseq, seq)
 
-      // if upper seq disables do_dut_init for this seq, then can't issue reset
+      // if upper seq disables do_apply_reset for this seq, then can't issue reset
       // as upper seq may drive reset
-      if (do_dut_init) alert_vseq.do_dut_init = $urandom_range(0, 1);
-      else             alert_vseq.do_dut_init = 0;
+      if (do_apply_reset) begin
+        alert_vseq.do_apply_reset = $urandom_range(0, 1);
+        // config_locked will be set unless reset is issued
+        alert_vseq.config_locked = alert_vseq.do_apply_reset ? 0 : config_locked;
+      end else begin
+        alert_vseq.do_apply_reset = 0;
+        alert_vseq.config_locked = config_locked;
+      end
 
       alert_vseq.set_sequencer(p_sequencer);
       `DV_CHECK_RANDOMIZE_FATAL(alert_vseq)
@@ -42,6 +48,7 @@ class alert_handler_stress_all_vseq extends alert_handler_base_vseq;
       end
 
       alert_vseq.start(p_sequencer);
+      config_locked = alert_vseq.config_locked;
     end
   endtask : body
 

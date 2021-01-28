@@ -27,6 +27,8 @@ module uart_core (
 
   import uart_reg_pkg::*;
 
+  localparam int NcoWidth = $bits(reg2hw.ctrl.nco.q);
+
   logic   [15:0]  rx_val_q;
   logic   [7:0]   uart_rdata;
   logic           tick_baud_x16, rx_tick_baud;
@@ -148,16 +150,14 @@ module uart_core (
 
   //              NCO 16x Baud Generator
   // output clock rate is:
-  //      Fin * (NCO/2**16)
-  // So, with a 16 bit accumulator, the output clock is
-  //      Fin * (NCO/65536)
-  logic   [16:0]     nco_sum_q; // extra bit to get the carry
+  //      Fin * (NCO/2**NcoWidth)
+  logic   [NcoWidth:0]     nco_sum_q; // extra bit to get the carry
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       nco_sum_q <= 17'h0;
     end else if (tx_enable || rx_enable) begin
-      nco_sum_q <= {1'b0,nco_sum_q[15:0]} + {1'b0,reg2hw.ctrl.nco.q};
+      nco_sum_q <= {1'b0,nco_sum_q[NcoWidth-1:0]} + {1'b0,reg2hw.ctrl.nco.q[NcoWidth-1:0]};
     end
   end
 
@@ -170,20 +170,20 @@ module uart_core (
   assign tx_fifo_rready = tx_uart_idle & tx_fifo_rvalid & tx_enable;
 
   prim_fifo_sync #(
-    .Width(8),
-    .Pass (1'b0),
-    .Depth(32)
+    .Width   (8),
+    .Pass    (1'b0),
+    .Depth   (32)
   ) u_uart_txfifo (
     .clk_i,
     .rst_ni,
-    .clr_i  (uart_fifo_txrst),
-    .wvalid (reg2hw.wdata.qe),
-    .wready (tx_fifo_wready),
-    .wdata  (reg2hw.wdata.q),
-    .depth  (tx_fifo_depth),
-    .rvalid (tx_fifo_rvalid),
-    .rready (tx_fifo_rready),
-    .rdata  (tx_fifo_data)
+    .clr_i   (uart_fifo_txrst),
+    .wvalid_i(reg2hw.wdata.qe),
+    .wready_o(tx_fifo_wready),
+    .wdata_i (reg2hw.wdata.q),
+    .depth_o (tx_fifo_depth),
+    .rvalid_o(tx_fifo_rvalid),
+    .rready_i(tx_fifo_rready),
+    .rdata_o (tx_fifo_data)
   );
 
   uart_tx uart_tx (
@@ -219,12 +219,12 @@ module uart_core (
   //      sync the incoming data
   prim_flop_2sync #(
     .Width(1),
-    .ResetValue(1)
+    .ResetValue(1'b1)
   ) sync_rx (
     .clk_i,
     .rst_ni,
-    .d(rx),
-    .q(rx_sync)
+    .d_i(rx),
+    .q_o(rx_sync)
   );
 
   // Based on: en.wikipedia.org/wiki/Repetition_code mentions the use of a majority filter
@@ -269,20 +269,20 @@ module uart_core (
   assign rx_fifo_wvalid = rx_valid & ~event_rx_frame_err & ~event_rx_parity_err;
 
   prim_fifo_sync #(
-    .Width (8),
-    .Pass  (1'b0),
-    .Depth (32)
+    .Width   (8),
+    .Pass    (1'b0),
+    .Depth   (32)
   ) u_uart_rxfifo (
     .clk_i,
     .rst_ni,
-    .clr_i  (uart_fifo_rxrst),
-    .wvalid (rx_fifo_wvalid),
-    .wready (rx_fifo_wready),
-    .wdata  (rx_fifo_data),
-    .depth  (rx_fifo_depth),
-    .rvalid (rx_fifo_rvalid),
-    .rready (reg2hw.rdata.re),
-    .rdata  (uart_rdata)
+    .clr_i   (uart_fifo_rxrst),
+    .wvalid_i(rx_fifo_wvalid),
+    .wready_o(rx_fifo_wready),
+    .wdata_i (rx_fifo_data),
+    .depth_o (rx_fifo_depth),
+    .rvalid_o(rx_fifo_rvalid),
+    .rready_i(reg2hw.rdata.re),
+    .rdata_o (uart_rdata)
   );
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -384,6 +384,8 @@ module uart_core (
   // instantiate interrupt hardware primitives
 
   prim_intr_hw #(.Width(1)) intr_hw_tx_watermark (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_tx_watermark),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.tx_watermark.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.tx_watermark.q),
@@ -395,6 +397,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_rx_watermark (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_rx_watermark),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.rx_watermark.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.rx_watermark.q),
@@ -406,6 +410,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_tx_empty (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_tx_empty),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.tx_empty.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.tx_empty.q),
@@ -417,6 +423,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_rx_overflow (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_rx_overflow),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.rx_overflow.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.rx_overflow.q),
@@ -428,6 +436,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_rx_frame_err (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_rx_frame_err),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.rx_frame_err.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.rx_frame_err.q),
@@ -439,6 +449,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_rx_break_err (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_rx_break_err),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.rx_break_err.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.rx_break_err.q),
@@ -450,6 +462,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_rx_timeout (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_rx_timeout),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.rx_timeout.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.rx_timeout.q),
@@ -461,6 +475,8 @@ module uart_core (
   );
 
   prim_intr_hw #(.Width(1)) intr_hw_rx_parity_err (
+    .clk_i,
+    .rst_ni,
     .event_intr_i           (event_rx_parity_err),
     .reg2hw_intr_enable_q_i (reg2hw.intr_enable.rx_parity_err.q),
     .reg2hw_intr_test_q_i   (reg2hw.intr_test.rx_parity_err.q),

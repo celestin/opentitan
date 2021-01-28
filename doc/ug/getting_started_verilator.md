@@ -1,4 +1,6 @@
-# Getting started with Verilator
+---
+title: Getting started with Verilator
+---
 
 ## About Verilator
 
@@ -17,8 +19,10 @@ First the simulation needs to built itself.
 
 ```console
 $ cd $REPO_TOP
-$ fusesoc --cores-root . run --target=sim --setup --build lowrisc:systems:top_earlgrey_verilator
+$ fusesoc --cores-root . run --flag=fileset_top --target=sim --setup --build lowrisc:systems:top_earlgrey_verilator
 ```
+The fsel_top flag used above is specific to the OpenTitan project to select the correct fileset.
+
 
 Then we need to build software to run on the simulated system.
 There are 3 memory types: ROM, RAM and Flash.
@@ -71,6 +75,36 @@ Note that `screen` will only show output that has been generated after `screen` 
 
 You can exit `screen` (in the default configuration) by pressing `CTRL-a k` and confirm with `y`.
 
+If everything is working correctly you should expect to see text like the following from the virtual UART (replacing `/dev/pts/11` with the reported device):
+
+```console
+$ cat /dev/pts/11
+I00000 boot_rom.c:35] Version:    opentitan-snapshot-20191101-1-1182-g2aedf641
+Build Date: 2020-05-13, 15:04:09
+
+I00001 boot_rom.c:44] Boot ROM initialisation has completed, jump into flash!
+I00000 hello_world.c:30] Hello World!
+I00001 hello_world.c:31] Built at: May 13 2020, 15:27:31
+I00002 demos.c:17] Watch the LEDs!
+I00003 hello_world.c:44] Try out the switches on the board
+I00004 hello_world.c:45] or type anything into the console window.
+I00005 hello_world.c:46] The LEDs show the ASCII code of the last character.
+```
+
+Instead of interacting with the UART through a pseudo-terminal, the UART output can be written to a log file, or to STDOUT.
+This is done by passing the `UARTDPI_LOG_uart0` plus argument ("plusarg") to the verilated simulation at runtime.
+To write all UART output to STDOUT, pass `+UARTDPI_LOG_uart0=-` to the simulation.
+To write all UART output to a file called `your-log-file.log`, pass `+UARTDPI_LOG_uart0=your-log-file.log`.
+
+A full command-line invocation of the simulation could then look like that:
+```console
+$ cd $REPO_TOP
+$ build/lowrisc_systems_top_earlgrey_verilator_0.1/sim-verilator/Vtop_earlgrey_verilator \
+  --meminit=rom,build-bin/sw/device/boot_rom/boot_rom_sim_verilator.elf \
+  --meminit=flash,build-bin/sw/device/examples/hello_world/hello_world_sim_verilator.elf \
+  +UARTDPI_LOG_uart0=-
+```
+
 ## Interact with GPIO
 
 The simulation includes a DPI module to map general-purpose I/O (GPIO) pins to two POSIX FIFO files: one for input, and one for output.
@@ -117,7 +151,7 @@ $ /tools/openocd/bin/openocd -s util/openocd -f board/lowrisc-earlgrey-verilator
 
 ## SPI device test interface
 
-The simulation contains code to monitor the SPI bus and provide a master interface to allow interaction with the `spi_device`.
+The simulation contains code to monitor the SPI bus and provide a host interface to allow interaction with the `spi_device`.
 When starting the simulation you should see a message like
 
 ```console

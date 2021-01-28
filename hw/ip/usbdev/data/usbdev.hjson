@@ -18,10 +18,27 @@
   ],
   available_output_list: [
     { name: "se0", desc: "USB single-ended zero link state" }
-    { name: "pullup", desc: "USB pullup control" }
+    { name: "dp_pullup", desc: "USB D+ pullup control" }
+    { name: "dn_pullup", desc: "USB D- pullup control" }
     { name: "tx_mode_se", desc: "USB single-ended transmit mode control" }
     { name: "suspend", desc: "USB link suspend state" }
   ],
+  inter_signal_list: [
+    { name:    "usb_ref_val",
+      type:    "uni",
+      act:     "req",
+      package: "",
+      struct:  "logic",
+      width:   "1"
+    }
+    { name:    "usb_ref_pulse",
+      type:    "uni",
+      act:     "req",
+      package: "",
+      struct:  "logic",
+      width:   "1"
+    }
+  ]
   param_list: [
     { name:    "NEndpoints",
       type:    "int",
@@ -113,6 +130,12 @@
     { name: "connected",
       desc: "Raised if VBUS is applied."
     }
+    { name: "link_out_err",
+      desc: '''
+            Raised if a packet to an OUT endpoint started to be received but was then dropped due to an error.
+            This error is raised if either the data toggle, token, packet or CRC is invalid or if there is no buffer available in the Received Buffer FIFO.
+            '''
+    }
   ]
   regwidth: "32",
   registers: [
@@ -192,14 +215,19 @@
               name: "suspend",
               desc: "Link suspended (constant idle for > 3 ms), was active before becoming suspended"
             },
-
+            { value: "5",
+              name: "active_nosof",
+              desc: "Link active but no SOF has been received since the last reset."
+            },
           ]
         }
         {
           bits: "15",
           name: "sense",
           desc: '''
-                Reflects the state of the sense pin. 1 indicates that the host is providing VBUS.
+                Reflects the state of the sense pin.
+                1 indicates that the host is providing VBUS.
+                Note that this bit always shows the state of the actual pin and does not take account of the override control.
                 '''
         }
         {
@@ -472,6 +500,135 @@
         ]
       }
     }
+    { name: "phy_pins_sense",
+      desc: '''
+            USB PHY pins sense.
+            This register can be used to read out the state of the USB device inputs and outputs from software.
+            This is designed to be used for debugging purposes or during chip testing.
+            '''
+      swaccess: "ro",
+      hwaccess: "hwo",
+      hwext: "true",
+      fields: [
+        {
+          bits: "0",
+          name: "rx_dp_i",
+          desc: "USB D+ input."
+        }
+        {
+          bits: "1",
+          name: "rx_dn_i",
+          desc: "USB D- input."
+        }
+        {
+          bits: "2",
+          name: "rx_d_i",
+          desc: "USB differential input."
+        }
+        {
+          bits: "8",
+          name: "tx_dp_o",
+          desc: "USB D+ output (readback)."
+        }
+        {
+          bits: "9",
+          name: "tx_dn_o",
+          desc: "USB D- output (readback)."
+        }
+        {
+          bits: "10",
+          name: "tx_d_o",
+          desc: "USB differential output (readback)."
+        }
+        {
+          bits: "11",
+          name: "tx_se0_o",
+          desc: "USB SE0 output (readback)."
+        }
+        {
+          bits: "12",
+          name: "tx_oe_o",
+          desc: "USB OE output (readback)."
+        }
+        {
+          bits: "13",
+          name: "suspend_o",
+          desc: "USB suspend output (readback)."
+        }
+        {
+          bits: "16",
+          name: "pwr_sense",
+          desc: "USB power sense signal."
+        }
+      ]
+      tags: [// Updated by HW based on observed USB PHY signals, comprises also readbacks.
+             // Exclude all read checks in all tests including reset tests.
+             "excl:CsrAllTests:CsrExclCheck"]
+    }
+    { name: "phy_pins_drive",
+      desc: '''
+            USB PHY pins drive.
+            This register can be used to control the USB device inputs and outputs from software.
+            This is designed to be used for debugging purposes or during chip testing.
+            '''
+      swaccess: "rw",
+      hwaccess: "hro",
+      fields: [
+        {
+          bits: "0",
+          name: "dp_o",
+          desc: "USB D+ output."
+        }
+        {
+          bits: "1",
+          name: "dn_o",
+          desc: "USB D- output."
+        }
+        {
+          bits: "2",
+          name: "d_o",
+          desc: "USB differential output."
+        }
+        {
+          bits: "3",
+          name: "se0_o",
+          desc: "USB SE0 output."
+        }
+        {
+          bits: "4",
+          name: "oe_o",
+          desc: "USB OE output."
+        }
+        {
+          bits: "5",
+          name: "tx_mode_se_o",
+          desc: "USB TX mode. 0: Differential, 1: Single-ended."
+        }
+        {
+          bits: "6",
+          name: "dp_pullup_en_o",
+          desc: "USB D+ pullup enable output."
+        }
+        {
+          bits: "7",
+          name: "dn_pullup_en_o",
+          desc: "USB D- pullup enable output."
+        }
+        {
+          bits: "8",
+          name: "suspend_o",
+          desc: "USB suspend output."
+        }
+        {
+          bits: "16",
+          name: "en",
+          desc: '''
+                0: Outputs are controlled by the hardware block.
+                1: Outputs are controlled with this register.
+                '''
+        }
+      ]
+    }
     { name: "phy_config",
       desc: "USB PHY Configuration",
       swaccess: "rw",
@@ -517,6 +674,37 @@
           name: "override_pwr_sense_val",
           desc: '''
                 0: USB power not present, 1: present.
+                '''
+        }
+        {
+          bits: "5",
+          resval: "0",
+          name: "pinflip",
+          desc: '''
+                Flip the D+/D- pins.
+                Particularly useful if D+/D- are mapped to SBU1/SBU2 pins of USB-C.
+
+                '''
+        }
+        {
+          bits: "6",
+          resval: "0",
+          name: "usb_ref_disable",
+          desc: '''
+                0: Enable reference signal generation for clock synchronization, 1: disable it by forcing the associated signals to zero.
+
+                '''
+        }
+        {
+          bits: "7",
+          resval: "0",
+          name: "tx_osc_test_mode",
+          desc: '''
+                Disable (0) or enable (1) oscillator test mode.
+                If enabled, the device constantly transmits a J/K pattern, which is useful for testing the USB clock.
+                Note that while in oscillator test mode, the device no longer receives SOFs and consequently does not generate the reference signal for clock synchronization.
+                The clock might drift off.
+
                 '''
         }
       ]

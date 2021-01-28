@@ -23,13 +23,13 @@
 //   DRspDepth:     (one per device_count) Depth of device i response FIFO,
 //                  default 2
 //
-// Requests must stall to one slave until all responses from other slaves
+// Requests must stall to one device until all responses from other devices
 // have returned.  Need to keep a counter of all outstanding requests and
-// wait until that counter is zero before switching slaves.
+// wait until that counter is zero before switching devices.
 //
-// This module will return a request error if the input value of 'dev_select'
+// This module will return a request error if the input value of 'dev_select_i'
 // is not within the range 0..N-1. Thus the instantiator of the socket
-// can indicate error by any illegal value of dev_select. 4'b1111 is
+// can indicate error by any illegal value of dev_select_i. 4'b1111 is
 // recommended for visibility
 //
 // The maximum value of N is 15
@@ -54,10 +54,10 @@ module tlul_socket_1n #(
   output tlul_pkg::tl_d2h_t tl_h_o,
   output tlul_pkg::tl_h2d_t tl_d_o    [N],
   input  tlul_pkg::tl_d2h_t tl_d_i    [N],
-  input  [NWD-1:0]          dev_select
+  input  [NWD-1:0]          dev_select_i
 );
 
-  `ASSERT_INIT(maxN, N < 16)
+  `ASSERT_INIT(maxN, N < 32)
 
   // Since our steering is done after potential FIFOing, we need to
   // shove our device select bits into spare bits of reqfifo
@@ -83,7 +83,7 @@ module tlul_socket_1n #(
     .tl_h_o,
     .tl_d_o     (tl_t_o),
     .tl_d_i     (tl_t_i),
-    .spare_req_i (dev_select),
+    .spare_req_i (dev_select_i),
     .spare_req_o (dev_select_t),
     .spare_rsp_i (1'b0),
     .spare_rsp_o ());
@@ -92,32 +92,33 @@ module tlul_socket_1n #(
   // We need to keep track of how many requests are outstanding,
   // and to which device. New requests are compared to this and
   // stall until that number is zero.
-
-  logic [7:0]     num_req_outstanding;
-  logic [NWD-1:0] dev_select_outstanding;
-  logic           hold_all_requests;
-  logic           accept_t_req, accept_t_rsp;
+  localparam int MaxOutstanding = 2**top_pkg::TL_AIW; // Up to 256 ounstanding
+  localparam int OutstandingW = $clog2(MaxOutstanding+1);
+  logic [OutstandingW-1:0] num_req_outstanding;
+  logic [NWD-1:0]          dev_select_outstanding;
+  logic                    hold_all_requests;
+  logic                    accept_t_req, accept_t_rsp;
 
   assign  accept_t_req = tl_t_o.a_valid & tl_t_i.a_ready;
   assign  accept_t_rsp = tl_t_i.d_valid & tl_t_o.d_ready;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      num_req_outstanding <= 8'h0;
+      num_req_outstanding <= '0;
       dev_select_outstanding <= '0;
     end else if (accept_t_req) begin
       if (!accept_t_rsp) begin
-        `ASSERT_I(NotOverflowed_A, num_req_outstanding != '1)
-        num_req_outstanding <= num_req_outstanding + 8'h1;
+        `ASSERT_I(NotOverflowed_A, num_req_outstanding <= MaxOutstanding)
+        num_req_outstanding <= num_req_outstanding + 1'b1;
       end
       dev_select_outstanding <= dev_select_t;
     end else if (accept_t_rsp) begin
-      num_req_outstanding <= num_req_outstanding - 8'h1;
+      num_req_outstanding <= num_req_outstanding - 1'b1;
     end
   end
 
   assign hold_all_requests =
-      (num_req_outstanding != 8'h0) &
+      (num_req_outstanding != '0) &
       (dev_select_t != dev_select_outstanding);
 
   // Make N copies of 't' request side with modified reqvalid, call
@@ -142,7 +143,7 @@ module tlul_socket_1n #(
 
   tlul_pkg::tl_d2h_t tl_t_p ;
 
-  // for the returning reqready, only look at the slave we're addressing
+  // for the returning reqready, only look at the device we're addressing
   logic hfifo_reqready;
   always_comb begin
     hfifo_reqready = tl_u_i[N].a_ready; // default to error

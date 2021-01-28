@@ -30,15 +30,15 @@ package prim_cipher_pkg;
                                                   4'h9, 4'h8, 4'hD, 4'hF,
                                                   4'h2, 4'h3, 4'h7, 4'hB};
   // nibble permutations
-  parameter logic [15:0][3:0] PRINCE_SHIFT_ROWS64  = '{4'hB, 4'h6, 4'h1, 4'hC,
+  parameter logic [15:0][3:0] PRINCE_SHIFT_ROWS64  = '{4'hF, 4'hA, 4'h5, 4'h0,
+                                                       4'hB, 4'h6, 4'h1, 4'hC,
                                                        4'h7, 4'h2, 4'hD, 4'h8,
-                                                       4'h3, 4'hE, 4'h9, 4'h4,
-                                                       4'hF, 4'hA, 4'h5, 4'h0};
+                                                       4'h3, 4'hE, 4'h9, 4'h4};
 
-  parameter logic [15:0][3:0] PRINCE_SHIFT_ROWS64_INV = '{4'h3, 4'h6, 4'h9, 4'hC,
-                                                          4'hF, 4'h2, 4'h5, 4'h8,
+  parameter logic [15:0][3:0] PRINCE_SHIFT_ROWS64_INV = '{4'hF, 4'h2, 4'h5, 4'h8,
                                                           4'hB, 4'hE, 4'h1, 4'h4,
-                                                          4'h7, 4'hA, 4'hD, 4'h0};
+                                                          4'h7, 4'hA, 4'hD, 4'h0,
+                                                          4'h3, 4'h6, 4'h9, 4'hC};
 
   // these are the round constants
   parameter logic [11:0][63:0] PRINCE_ROUND_CONST = {64'hC0AC29B7C97C50DD,
@@ -58,10 +58,10 @@ package prim_cipher_pkg;
   parameter logic [63:0] PRINCE_ALPHA_CONST = 64'hC0AC29B7C97C50DD;
 
   // masking constants for shift rows function below
-  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST0 = 16'hEDB7;
-  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST1 = 16'h7EDB;
-  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST2 = 16'hB7ED;
-  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST3 = 16'hDB7E;
+  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST0 = 16'h7BDE;
+  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST1 = 16'hBDE7;
+  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST2 = 16'hDE7B;
+  parameter logic [15:0] PRINCE_SHIFT_ROWS_CONST3 = 16'hE7BD;
 
   // nibble shifts
   function automatic logic [31:0] prince_shiftrows_32bit(logic [31:0]      state_in,
@@ -94,15 +94,15 @@ package prim_cipher_pkg;
   function automatic logic [31:0] prince_mult_prime_32bit(logic [31:0] state_in);
     logic [31:0] state_out;
     // M0
-    state_out[0  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
-    state_out[4  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
-    state_out[8  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
-    state_out[12 +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[0  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[4  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
+    state_out[8  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
+    state_out[12 +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
     // M1
-    state_out[16 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
-    state_out[20 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
-    state_out[24 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
-    state_out[28 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
+    state_out[16 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
+    state_out[20 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[24 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
+    state_out[28 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
     return state_out;
   endfunction : prince_mult_prime_32bit
 
@@ -110,25 +110,25 @@ package prim_cipher_pkg;
   function automatic logic [63:0] prince_mult_prime_64bit(logic [63:0] state_in);
     logic [63:0] state_out;
     // M0
-    state_out[0  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
-    state_out[4  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
-    state_out[8  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
-    state_out[12 +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[0  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[4  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
+    state_out[8  +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
+    state_out[12 +: 4] = prince_nibble_red16(state_in[ 0 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
     // M1
-    state_out[16 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
-    state_out[20 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
-    state_out[24 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
-    state_out[28 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
+    state_out[16 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
+    state_out[20 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[24 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
+    state_out[28 +: 4] = prince_nibble_red16(state_in[16 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
     // M1
-    state_out[32 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
-    state_out[36 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
-    state_out[40 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
-    state_out[44 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
+    state_out[32 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
+    state_out[36 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[40 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
+    state_out[44 +: 4] = prince_nibble_red16(state_in[32 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
     // M0
-    state_out[48 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
-    state_out[52 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
-    state_out[56 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
-    state_out[60 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[48 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST3);
+    state_out[52 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST2);
+    state_out[56 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST1);
+    state_out[60 +: 4] = prince_nibble_red16(state_in[48 +: 16] & PRINCE_SHIFT_ROWS_CONST0);
     return state_out;
   endfunction : prince_mult_prime_64bit
 
@@ -208,7 +208,7 @@ package prim_cipher_pkg;
                                                        logic [4:0]  round_idx);
     logic [63:0] key_out;
     // rotate by 61 to the left
-    key_out = 64'(key_in << 61) | 64'(key_in >> (64-61));
+    key_out = {key_in[63-61:0], key_in[63:64-61]};
     // sbox on uppermost 4 bits
     key_out[63 -: 4] = PRESENT_SBOX4[key_out[63 -: 4]];
     // xor in round counter on bits 19 to 15
@@ -220,7 +220,7 @@ package prim_cipher_pkg;
                                                        logic [4:0]  round_idx);
     logic [79:0] key_out;
     // rotate by 61 to the left
-    key_out = 80'(key_in << 61) | 80'(key_in >> (80-61));
+    key_out = {key_in[79-61:0], key_in[79:80-61]};
     // sbox on uppermost 4 bits
     key_out[79 -: 4] = PRESENT_SBOX4[key_out[79 -: 4]];
     // xor in round counter on bits 19 to 15
@@ -232,55 +232,53 @@ package prim_cipher_pkg;
                                                          logic [4:0]   round_idx);
     logic [127:0] key_out;
     // rotate by 61 to the left
-    key_out = 128'(key_in << 61) | 128'(key_in >> (128-61));
+    key_out = {key_in[127-61:0], key_in[127:128-61]};
     // sbox on uppermost 4 bits
     key_out[127 -: 4] = PRESENT_SBOX4[key_out[127 -: 4]];
-    // xor in round counter on bits 19 to 15
-    key_out[19:15] ^= round_idx;
+    // sbox on second nibble from top
+    key_out[123 -: 4] = PRESENT_SBOX4[key_out[123 -: 4]];
+    // xor in round counter on bits 66 to 62
+    key_out[66:62] ^= round_idx;
     return key_out;
   endfunction : present_update_key128
 
 
   // inverse key schedule
   function automatic logic [63:0] present_inv_update_key64(logic [63:0] key_in,
-                                                           logic [4:0]  round_idx,
-                                                           // total number of rounds employed
-                                                           logic [4:0]  round_cnt);
-    logic [63:0] key_out;
+                                                           logic [4:0]  round_idx);
+    logic [63:0] key_out = key_in;
     // xor in round counter on bits 19 to 15
-    key_out[19:15] ^= 6'(round_cnt) + 1 - round_idx;
+    key_out[19:15] ^= round_idx;
     // sbox on uppermost 4 bits
     key_out[63 -: 4] = PRESENT_SBOX4_INV[key_out[63 -: 4]];
     // rotate by 61 to the right
-    key_out = 64'(key_in >> 61) | 64'(key_in << (64-61));
+    key_out = {key_out[60:0], key_out[63:61]};
     return key_out;
   endfunction : present_inv_update_key64
 
   function automatic logic [79:0] present_inv_update_key80(logic [79:0] key_in,
-                                                           logic [4:0]  round_idx,
-                                                           // total number of rounds employed
-                                                           logic [4:0]  round_cnt);
-    logic [79:0] key_out;
+                                                           logic [4:0]  round_idx);
+    logic [79:0] key_out = key_in;
     // xor in round counter on bits 19 to 15
-    key_out[19:15] ^= 6'(round_cnt) + 1 - round_idx;
+    key_out[19:15] ^= round_idx;
     // sbox on uppermost 4 bits
     key_out[79 -: 4] = PRESENT_SBOX4_INV[key_out[79 -: 4]];
     // rotate by 61 to the right
-    key_out = 80'(key_in >> 61) | 80'(key_in << (80-61));
+    key_out = {key_out[60:0], key_out[79:61]};
     return key_out;
   endfunction : present_inv_update_key80
 
   function automatic logic [127:0] present_inv_update_key128(logic [127:0] key_in,
-                                                             logic [4:0]   round_idx,
-                                                             // total number of rounds employed
-                                                             logic [4:0]   round_cnt);
-    logic [127:0] key_out;
-    // xor in round counter on bits 19 to 15
-    key_out[19:15] ^= 6'(round_cnt) + 1 - round_idx;
+                                                             logic [4:0]   round_idx);
+    logic [127:0] key_out = key_in;
+    // xor in round counter on bits 66 to 62
+    key_out[66:62] ^= round_idx;
+    // sbox on second highest nibble
+    key_out[123 -: 4] = PRESENT_SBOX4_INV[key_out[123 -: 4]];
     // sbox on uppermost 4 bits
     key_out[127 -: 4] = PRESENT_SBOX4_INV[key_out[127 -: 4]];
     // rotate by 61 to the right
-    key_out = 128'(key_in >> 61) | 128'(key_in << (128-61));
+    key_out = {key_out[60:0], key_out[127:61]};
     return key_out;
   endfunction : present_inv_update_key128
 
@@ -292,7 +290,7 @@ package prim_cipher_pkg;
                                                         logic [4:0]  round_cnt);
     logic [63:0] key_out;
     key_out = key_in;
-    for (int k = 0; k < round_cnt; k++) begin
+    for (int unsigned k = 0; k < round_cnt; k++) begin
       key_out = present_update_key64(key_out, 5'(k + 1));
     end
     return key_out;
@@ -303,7 +301,7 @@ package prim_cipher_pkg;
                                                         logic [4:0]  round_cnt);
     logic [79:0] key_out;
     key_out = key_in;
-    for (int k = 0; k < round_cnt; k++) begin
+    for (int unsigned k = 0; k < round_cnt; k++) begin
       key_out = present_update_key80(key_out, 5'(k + 1));
     end
     return key_out;
@@ -314,7 +312,7 @@ package prim_cipher_pkg;
                                                           logic [4:0]   round_cnt);
     logic [127:0] key_out;
     key_out = key_in;
-    for (int k = 0; k < round_cnt; k++) begin
+    for (int unsigned k = 0; k < round_cnt; k++) begin
       key_out = present_update_key128(key_out, 5'(k + 1));
     end
     return key_out;
@@ -324,11 +322,29 @@ package prim_cipher_pkg;
   // Common Subfunctions //
   /////////////////////////
 
+  function automatic logic [7:0] sbox4_8bit(logic [7:0] state_in, logic [15:0][3:0] sbox4);
+    logic [7:0] state_out;
+    // note that if simulation performance becomes an issue, this loop can be unrolled
+    for (int k = 0; k < 8/4; k++) begin
+      state_out[k*4  +: 4] = sbox4[state_in[k*4  +: 4]];
+    end
+    return state_out;
+  endfunction : sbox4_8bit
+
+  function automatic logic [15:0] sbox4_16bit(logic [15:0] state_in, logic [15:0][3:0] sbox4);
+    logic [15:0] state_out;
+    // note that if simulation performance becomes an issue, this loop can be unrolled
+    for (int k = 0; k < 2; k++) begin
+      state_out[k*8  +: 8] = sbox4_8bit(state_in[k*8  +: 8], sbox4);
+    end
+    return state_out;
+  endfunction : sbox4_16bit
+
   function automatic logic [31:0] sbox4_32bit(logic [31:0] state_in, logic [15:0][3:0] sbox4);
     logic [31:0] state_out;
     // note that if simulation performance becomes an issue, this loop can be unrolled
-    for (int k = 0; k < 32/4; k++) begin
-      state_out[k*4  +: 4] = sbox4[state_in[k*4  +: 4]];
+    for (int k = 0; k < 4; k++) begin
+      state_out[k*8  +: 8] = sbox4_8bit(state_in[k*8  +: 8], sbox4);
     end
     return state_out;
   endfunction : sbox4_32bit
@@ -336,17 +352,35 @@ package prim_cipher_pkg;
   function automatic logic [63:0] sbox4_64bit(logic [63:0] state_in, logic [15:0][3:0] sbox4);
     logic [63:0] state_out;
     // note that if simulation performance becomes an issue, this loop can be unrolled
-    for (int k = 0; k < 64/4; k++) begin
-      state_out[k*4  +: 4] = sbox4[state_in[k*4  +: 4]];
+    for (int k = 0; k < 8; k++) begin
+      state_out[k*8  +: 8] = sbox4_8bit(state_in[k*8  +: 8], sbox4);
     end
     return state_out;
   endfunction : sbox4_64bit
+
+  function automatic logic [7:0] perm_8bit(logic [7:0] state_in, logic [7:0][2:0] perm);
+    logic [7:0] state_out;
+    // note that if simulation performance becomes an issue, this loop can be unrolled
+    for (int k = 0; k < 8; k++) begin
+      state_out[perm[k]] = state_in[k];
+    end
+    return state_out;
+  endfunction : perm_8bit
+
+    function automatic logic [15:0] perm_16bit(logic [15:0] state_in, logic [15:0][3:0] perm);
+    logic [15:0] state_out;
+    // note that if simulation performance becomes an issue, this loop can be unrolled
+    for (int k = 0; k < 16; k++) begin
+      state_out[perm[k]] = state_in[k];
+    end
+    return state_out;
+  endfunction : perm_16bit
 
   function automatic logic [31:0] perm_32bit(logic [31:0] state_in, logic [31:0][4:0] perm);
     logic [31:0] state_out;
     // note that if simulation performance becomes an issue, this loop can be unrolled
     for (int k = 0; k < 32; k++) begin
-      state_out[k] = state_in[perm[k]];
+      state_out[perm[k]] = state_in[k];
     end
     return state_out;
   endfunction : perm_32bit
@@ -355,7 +389,7 @@ package prim_cipher_pkg;
     logic [63:0] state_out;
     // note that if simulation performance becomes an issue, this loop can be unrolled
     for (int k = 0; k < 64; k++) begin
-      state_out[k] = state_in[perm[k]];
+      state_out[perm[k]] = state_in[k];
     end
     return state_out;
   endfunction : perm_64bit

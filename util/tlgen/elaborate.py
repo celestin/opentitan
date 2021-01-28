@@ -2,14 +2,13 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-import copy
 import logging as log
 
-from .item import Edge, Node, NodeType
+from .item import Node, NodeType
 from .xbar import Xbar
 
 
-def elaborate(xbar):  # xbar: Xbar -> bool
+def elaborate(xbar: Xbar) -> bool:
     """elaborate reads all nodes and edges then
     construct internal FIFOs, Sockets.
     """
@@ -23,11 +22,11 @@ def elaborate(xbar):  # xbar: Xbar -> bool
         process_node(host, xbar)
         log.info("Node Processed: " + repr(xbar))
 
-    ## Pipeline
+    # Pipeline
     process_pipeline(xbar)
 
-    ## Build address map
-    ## Each socket_1n should have address map
+    # Build address map
+    # Each socket_1n should have address map
 
     return True
 
@@ -84,9 +83,12 @@ def process_node(node, xbar):  # node: Node -> xbar: Xbar -> Xbar
                         node_type=NodeType.SOCKET_M1,
                         clock=xbar.clock,
                         reset=xbar.reset)
-        new_node.hdepth = 2
+
+        # By default, assume connecting to SOCKET_1N upstream and bypass all FIFOs
+        # If upstream requires pipelining, it will be added through process pipeline
+        new_node.hdepth = 0
         new_node.hpass = 2**len(node.us) - 1
-        new_node.ddepth = 2
+        new_node.ddepth = 0
         new_node.dpass = 1
         xbar.insert_node(new_node, node)
         process_node(new_node, xbar)
@@ -98,9 +100,12 @@ def process_node(node, xbar):  # node: Node -> xbar: Xbar -> Xbar
                         node_type=NodeType.SOCKET_1N,
                         clock=xbar.clock,
                         reset=xbar.reset)
-        new_node.hdepth = 2
+
+        # By default, assume connecting to SOCKET_M1 downstream and bypass all FIFOs
+        # If upstream requires pipelining, it will be added through process pipeline
+        new_node.hdepth = 0
         new_node.hpass = 1
-        new_node.ddepth = 2
+        new_node.ddepth = 0
         new_node.dpass = 2**len(node.ds) - 1
         xbar.insert_node(new_node, node)
 
@@ -123,29 +128,61 @@ def process_pipeline(xbar):
         # If Socket M1, find position of the host and follow procedure above
         # If it is device, it means host and device are directly connected. Ignore now.
 
-        # After process node is done, always only one downstream exists in any host node
-        if host.pipeline == True and host.pipeline_byp == True:
-            # No need to process, same as default
-            continue
+        log.info("Processing pipeline for host {}".format(host.name))
 
-        no_bypass = (host.pipeline == True and host.pipeline_byp == False)
+        # FIFO present with no passthrough option
+        # FIFO present with passthrough option
+        # FIFO not present and full passthrough
+        full_fifo = False
+        fifo_passthru = False
+        full_passthru = True
+        if host.pipeline is True and host.pipeline_byp is False:
+            full_fifo = True
+
+        elif host.pipeline is True and host.pipeline_byp is True:
+            fifo_passthru = True
+
+        elif host.pipeline is False:
+            full_passthru = True
+
         dnode = host.ds[0].ds
 
         if dnode.node_type == NodeType.ASYNC_FIFO:
             continue
 
         if dnode.node_type == NodeType.SOCKET_1N:
-            dnode.hpass = 0 if no_bypass else dnode.hpass
+            if full_fifo:
+                dnode.hpass = 0
+                dnode.hdepth = 2
+            elif fifo_passthru:
+                dnode.hpass = 0
+                dnode.hdepth = 2
+            elif full_passthru:
+                dnode.hpass = 1
+                dnode.hdepth = 0
+
+            log.info(
+                "Finished processing socket1n {}, pass={}, depth={}".format(
+                    dnode.name, dnode.hpass, dnode.hdepth))
 
         elif dnode.node_type == NodeType.SOCKET_M1:
-            idx = dnode.us.index(host.ds)
-            dnode.hpass = dnode.hpass ^ (
-                1 << idx) if no_bypass else dnode.hpass
+            idx = dnode.us.index(host.ds[0])
+            if full_fifo:
+                log.info("fifo present no bypass")
+                dnode.hpass = dnode.hpass & ~(1 << idx)
+                dnode.hdepth = dnode.hdepth | (2 << idx * 4)
+            elif fifo_passthru:
+                log.info("fifo present with bypass")
+                dnode.hpass = dnode.hpass | (1 << idx)
+                dnode.hdepth = dnode.hdepth | (2 << idx * 4)
+            elif full_passthru:
+                log.info("fifo not present")
+                dnode.hpass = dnode.hpass | (1 << idx)
+                dnode.hdepth = dnode.hdepth & ~(0xF << idx * 4)
 
-        # keep variables separate in case we ever need to differentiate
-        dnode.dpass = 0 if no_bypass else dnode.dpass
-        dnode.hdepth = 0 if host.pipeline == False else dnode.hdepth
-        dnode.ddepth = dnode.hdepth
+            log.info(
+                "Finished processing socketm1 {}, pass={}, depth={}".format(
+                    dnode.name, dnode.hpass, dnode.hdepth))
 
     for device in xbar.devices:
         # go upstream and set DReq/RspPass at the first instance.
@@ -156,10 +193,24 @@ def process_pipeline(xbar):
         # If Socket 1N, find position of the device and follow procedure above
         # If it is host, ignore
 
-        if device.pipeline == True and device.pipeline_byp == True:
-            continue
+        log.info("Processing pipeline for device {}".format(device.name))
 
-        no_bypass = (device.pipeline == True and device.pipeline_byp == False)
+        # FIFO present with no passthrough option
+        # FIFO present with passthrough option
+        # FIFO not present and full passthrough
+
+        full_fifo = False
+        fifo_passthru = False
+        full_passthru = True
+        if device.pipeline is True and device.pipeline_byp is False:
+            full_fifo = True
+
+        elif device.pipeline is True and device.pipeline_byp is True:
+            fifo_passthru = True
+
+        elif device.pipeline is False:
+            full_passthru = True
+
         unode = device.us[0].us
 
         if unode.node_type == NodeType.ASYNC_FIFO:
@@ -167,15 +218,35 @@ def process_pipeline(xbar):
 
         if unode.node_type == NodeType.SOCKET_1N:
             idx = unode.ds.index(device.us[0])
-            unode.dpass = unode.dpass ^ (
-                1 << idx) if no_bypass else unode.dpass
+
+            if full_fifo:
+                unode.dpass = unode.dpass & ~(1 << idx)
+                unode.ddepth = unode.ddepth | (2 << idx * 4)
+            elif fifo_passthru:
+                unode.dpass = unode.dpass | (1 << idx)
+                unode.ddepth = unode.ddepth | (2 << idx * 4)
+            elif full_passthru:
+                unode.dpass = unode.dpass | (1 << idx)
+                unode.ddepth = unode.ddepth & ~(0xF << idx * 4)
+
+            log.info("Finished processing socket1n {}, pass={:x}, depth={:x}".
+                     format(unode.name, unode.dpass, unode.ddepth))
 
         elif unode.node_type == NodeType.SOCKET_M1:
-            unode.dpass = 0 if no_bypass else unode.dpass
+            if full_fifo:
+                log.info("Fifo present with no passthrough")
+                unode.dpass = 0
+                unode.ddepth = 2
+            elif fifo_passthru:
+                log.info("Fifo present with passthrough")
+                unode.dpass = 0
+                unode.ddepth = 2
+            elif full_passthru:
+                log.info("No Fifo")
+                unode.dpass = 1
+                unode.ddepth = 0
 
-        # keep variables separate in case we ever need to differentiate
-        unode.hpass = 0 if no_bypass else unode.hpass
-        unode.ddepth = 0 if device.pipeline == False else unode.ddepth
-        unode.hdepth = unode.ddepth
+            log.info("Finished processing socketm1 {}, pass={:x}, depth={:x}".
+                     format(unode.name, unode.dpass, unode.ddepth))
 
     return xbar

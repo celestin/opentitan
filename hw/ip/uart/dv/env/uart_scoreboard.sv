@@ -85,7 +85,6 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
 
       if (tx_q.size() == 0 && tx_processing_item_q.size() == 0) begin
         intr_exp[TxEmpty] = 1;
-        process_objections(1'b0);
       end
     end
   endtask
@@ -164,7 +163,7 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
     uvm_reg csr;
     bit     do_read_check   = 1'b1;
     bit     write           = item.is_write();
-    uvm_reg_addr_t csr_addr = get_normalized_addr(item.a_addr);
+    uvm_reg_addr_t csr_addr = ral.get_word_aligned_addr(item.a_addr);
 
     // if access was to a valid csr, get the csr handle
     if (csr_addr inside {cfg.csr_addrs}) begin
@@ -196,16 +195,16 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
         if (write && channel == AddrChannel) begin
           tx_enabled = ral.ctrl.tx.get_mirrored_value();
           rx_enabled = ral.ctrl.rx.get_mirrored_value();
-          // if tx_q is not empty and tx got enabled, raise objection since we have work to do
+
           if ((tx_q.size > 0 || tx_processing_item_q.size > 0) && tx_enabled) begin
             if (tx_q.size > 0 && tx_processing_item_q.size == 0) begin
               tx_processing_item_q.push_back(tx_q.pop_front());
               fork begin
+                int loc_tx_q_size = tx_q.size();
                 cfg.clk_rst_vif.wait_n_clks(NUM_CLK_DLY_TO_UPDATE_TX_WATERMARK);
-                predict_tx_watermark_intr();
+                predict_tx_watermark_intr(loc_tx_q_size);
               end join_none
             end
-            process_objections(1'b1);
           end
         end
       end
@@ -224,6 +223,9 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
                 csr.get_mirrored_value(), tx_q.size(), uart_tx_clk_pulses), UVM_MEDIUM)
           end
           fork begin
+            int loc_tx_q_size = tx_q.size();
+            // remove 1 when it's abort to be popped for transfer
+            if (tx_enabled && tx_processing_item_q.size == 0 && tx_q.size > 0) loc_tx_q_size--;
             // use negedge to avoid race condition
             cfg.clk_rst_vif.wait_n_clks(NUM_CLK_DLY_TO_UPDATE_TX_WATERMARK);
             if (ral.ctrl.slpbk.get_mirrored_value()) begin
@@ -235,10 +237,8 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
               end
             end else if (tx_enabled && tx_processing_item_q.size == 0 && tx_q.size > 0) begin
               tx_processing_item_q.push_back(tx_q.pop_front());
-              // raise objection if tx is enabled - there is work to do
-              process_objections(1'b1);
             end
-            predict_tx_watermark_intr();
+            predict_tx_watermark_intr(loc_tx_q_size);
           end join_none
         end // write && channel == AddrChannel
       end
@@ -254,7 +254,6 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
             end
             tx_q.delete();
             void'(ral.fifo_ctrl.txrst.predict(.value(0), .kind(UVM_PREDICT_WRITE)));
-            if (!tx_enabled) process_objections(1'b0);
             if (cfg.en_cov) begin
               cov.fifo_level_cg.sample(.dir(UartTx),
                                        .lvl(ral.fifo_status.txlvl.get_mirrored_value()),
@@ -271,8 +270,12 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
             end
           end
           // recalculate watermark when RXILVL/TXILVL is updated
-          predict_tx_watermark_intr();
           predict_rx_watermark_intr();
+          fork begin
+            int loc_tx_q_size = tx_q.size();
+            if (txrst_val) cfg.clk_rst_vif.wait_n_clks(NUM_CLK_DLY_TO_UPDATE_TX_WATERMARK);
+            predict_tx_watermark_intr(loc_tx_q_size);
+          end join_none
         end // write && channel == AddrChannel
       end
       "intr_test": begin
@@ -519,7 +522,6 @@ class uart_scoreboard extends cip_base_scoreboard #(.CFG_T(uart_env_cfg),
     rxlvl_exp            = ral.fifo_status.rxlvl.get_reset();
     intr_exp             = ral.intr_state.get_reset();
     rdata_exp            = ral.rdata.get_reset();
-    process_objections(1'b0);
   endfunction
 
   function void check_phase(uvm_phase phase);

@@ -1,3 +1,7 @@
+# Copyright lowRISC contributors.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+
 CUR_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 PRJ_DIR := $(realpath ${CUR_DIR}/../)
 export PRJ_DIR
@@ -8,19 +12,30 @@ REG_OUTPUT_SW_DIR ?= ${REG_OUTPUT_DIR}/sw
 
 IPS ?= aes           \
        alert_handler \
+       clkmgr        \
+       entropy_src   \
+       csrng         \
+       edn           \
        flash_ctrl    \
        gpio          \
        hmac          \
+       kmac          \
        i2c           \
+       keymgr        \
+       lc_ctrl       \
        nmi_gen       \
+       otp_ctrl      \
        padctrl       \
        pinmux        \
        pwrmgr        \
        rstmgr        \
        rv_plic       \
        rv_timer      \
+       sensor_ctrl   \
        spi_device    \
+       sram_ctrl     \
        trial1        \
+       otbn          \
        uart          \
        usbdev        \
        usbuart
@@ -61,12 +76,18 @@ pre_reg:
 	mkdir -p ${REG_OUTPUT_DV_DIR}
 	mkdir -p ${REG_OUTPUT_SW_DIR}
 
-$(ips_reg): pre_reg
+$(ips_reg): pre_reg otp-mmap lc-state-enc
 	if [ -f ${PRJ_DIR}/hw/ip/$(subst _reg,,$@)/$(dir_hjson)/$(subst _reg,,$@).hjson ]; then \
-		${PRJ_DIR}/util/regtool.py -r ${PRJ_DIR}/hw/ip/$(subst _reg,,$@)/$(dir_hjson)/$(subst _reg,,$@).hjson; \
+		${PRJ_DIR}/util/regtool.py ${toolflags} -r ${PRJ_DIR}/hw/ip/$(subst _reg,,$@)/$(dir_hjson)/$(subst _reg,,$@).hjson; \
 		${PRJ_DIR}/util/regtool.py -s -t ${REG_OUTPUT_DV_DIR} \
 		  ${PRJ_DIR}/hw/ip/$(subst _reg,,$@)/$(dir_hjson)/$(subst _reg,,$@).hjson; \
 	fi
+
+otp-mmap:
+	cd ${PRJ_DIR} && ./util/design/gen-otp-mmap.py
+
+lc-state-enc:
+	cd ${PRJ_DIR} && ./util/design/gen-lc-state-enc.py
 
 regs-header: $(ips_reg_header) banner
 
@@ -93,4 +114,4 @@ $(tops_reg): pre_reg
 		-r -o ${REG_OUTPUT_DV_DIR}/$($@_TOP) ${toolflags}
 
 
-.PHONY: all banner $(ips_reg) $(tops_gen) $(ips_reg_header)
+.PHONY: all banner otp-mmap lc-state-enc $(ips_reg) $(tops_gen) $(ips_reg_header)

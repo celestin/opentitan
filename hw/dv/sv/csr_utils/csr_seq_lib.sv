@@ -158,6 +158,8 @@ endclass
 // checks. It is run as the first step of the CSR HW reset test.
 //--------------------------------------------------------------------------------------------------
 class csr_write_seq extends csr_base_seq;
+  static bit test_backdoor_path_done; // only run once
+  bit en_rand_backdoor_write;
   `uvm_object_utils(csr_write_seq)
 
   `uvm_object_new
@@ -165,7 +167,20 @@ class csr_write_seq extends csr_base_seq;
   virtual task body();
     uvm_reg_data_t wdata;
 
+    // check all hdl paths are valid
+    if (!test_backdoor_path_done) begin
+      uvm_reg_mem_hdl_paths_seq hdl_check_seq;
+      hdl_check_seq = uvm_reg_mem_hdl_paths_seq::type_id::create("hdl_check_seq");
+      foreach (models[i]) begin
+        hdl_check_seq.model = models[i];
+        hdl_check_seq.start(null);
+      end
+      test_backdoor_path_done = 1;
+    end
+
     foreach (test_csrs[i]) begin
+      dv_base_reg dv_csr;
+      bit         backdoor;
       // check if parent block or register is excluded from write
       if (m_csr_excl_item.is_excl(test_csrs[i], CsrExclWrite, CsrHwResetTest)) begin
         `uvm_info(`gtn, $sformatf("Skipping register %0s due to CsrExclWrite exclusion",
@@ -178,7 +193,14 @@ class csr_write_seq extends csr_base_seq;
 
       `DV_CHECK_STD_RANDOMIZE_FATAL(wdata)
       wdata &= get_mask_excl_fields(test_csrs[i], CsrExclWrite, CsrHwResetTest, m_csr_excl_item);
-      csr_wr(.csr(test_csrs[i]), .value(wdata), .blocking(0));
+
+      `downcast(dv_csr, test_csrs[i])
+      if (en_rand_backdoor_write && !dv_csr.get_is_ext_reg()) begin
+        `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(backdoor,
+                                           backdoor dist {0 :/ 7, 1 :/ 3};)
+      end
+
+      csr_wr(.csr(test_csrs[i]), .value(wdata), .blocking(0), .backdoor(backdoor));
     end
   endtask
 
@@ -197,14 +219,6 @@ class csr_rw_seq extends csr_base_seq;
 
   `uvm_object_new
 
-  rand bit do_csr_rd_check;
-  rand bit do_csr_field_rd_check;
-
-  constraint csr_or_field_rd_check_c {
-    // at least one of them should be set
-    do_csr_rd_check || do_csr_field_rd_check;
-  }
-
   virtual task body();
     foreach (test_csrs[i]) begin
       uvm_reg_data_t wdata;
@@ -221,7 +235,6 @@ class csr_rw_seq extends csr_base_seq;
       `uvm_info(`gtn, $sformatf("Verifying register read/write for %0s",
                                 test_csrs[i].get_full_name()), UVM_MEDIUM)
 
-      `DV_CHECK_FATAL(randomize(do_csr_rd_check, do_csr_field_rd_check))
       `DV_CHECK_STD_RANDOMIZE_FATAL(wdata)
       wdata &= get_mask_excl_fields(test_csrs[i], CsrExclWrite, CsrRwTest, m_csr_excl_item);
 
@@ -232,33 +245,15 @@ class csr_rw_seq extends csr_base_seq;
       // register is getting the updated access information.
       csr_wr(.csr(test_csrs[i]), .value(wdata), .blocking(0), .predict(!external_checker));
 
-      // check if parent block or register is excluded from read-check
-      if (m_csr_excl_item.is_excl(test_csrs[i], CsrExclWriteCheck, CsrRwTest)) begin
-        `uvm_info(`gtn, $sformatf("Skipping register %0s due to CsrExclWriteCheck exclusion",
-                                  test_csrs[i].get_full_name()), UVM_MEDIUM)
-        continue;
-      end
+      do_check_csr_or_field_rd(.csr(test_csrs[i]),
+                              .blocking(0),
+                              .compare(!external_checker),
+                              .compare_vs_ral(1),
+                              .csr_excl_type(CsrExclWriteCheck),
+                              .csr_test_type(CsrRwTest),
+                              .csr_excl_item(m_csr_excl_item));
 
-      compare_mask = get_mask_excl_fields(test_csrs[i], CsrExclWriteCheck, CsrRwTest,
-                                          m_csr_excl_item);
-      if (do_csr_rd_check) begin
-        csr_rd_check(.ptr           (test_csrs[i]),
-                     .blocking      (0),
-                     .compare       (!external_checker),
-                     .compare_vs_ral(1'b1),
-                     .compare_mask  (compare_mask));
-      end
-      if (do_csr_field_rd_check) begin
-        test_csrs[i].get_fields(test_fields);
-        test_fields.shuffle();
-        foreach (test_fields[j]) begin
-          bit compare = !m_csr_excl_item.is_excl(test_fields[j], CsrExclWriteCheck, CsrRwTest);
-          csr_rd_check(.ptr           (test_fields[j]),
-                       .blocking      (0),
-                       .compare       (!external_checker && compare),
-                       .compare_vs_ral(1'b1));
-        end
-      end
+      wait_if_max_outstanding_accesses_reached();
     end
   endtask
 
@@ -369,14 +364,7 @@ class csr_bit_bash_seq extends csr_base_seq;
       val = rg.get();
       val[k]  = ~val[k];
       err_msg = $sformatf("Wrote %0s[%0d]: %0b", rg.get_full_name(), k, val[k]);
-      csr_wr(.csr(rg), .value(val), .blocking(1));
-
-      // if external checker is not enabled and writes are made non-blocking, then we need to
-      // pre-predict so that the mirrored value will be updated. if we dont, then csr_rd_check task
-      // might pick up stale mirrored value
-      if (!external_checker) begin
-        void'(rg.predict(.value(val), .kind(UVM_PREDICT_WRITE)));
-      end
+      csr_wr(.csr(rg), .value(val), .blocking(1), .predict(!external_checker));
 
       // TODO, outstanding access to same reg isn't supported in uvm_reg. Need to add another seq
       // uvm_reg waits until transaction is completed, before start another read/write in same reg
@@ -419,14 +407,7 @@ class csr_aliasing_seq extends csr_base_seq;
 
       `DV_CHECK_STD_RANDOMIZE_FATAL(wdata)
       wdata &= get_mask_excl_fields(test_csrs[i], CsrExclWrite, CsrAliasingTest, m_csr_excl_item);
-      csr_wr(.csr(test_csrs[i]), .value(wdata), .blocking(0));
-
-      // if external checker is not enabled and writes are made non-blocking, then we need to
-      // pre-predict so that the mirrored value will be updated. if we dont, then csr_rd_check task
-      // might pick up stale mirrored value
-      if (!external_checker) begin
-        void'(test_csrs[i].predict(.value(wdata), .kind(UVM_PREDICT_WRITE)));
-      end
+      csr_wr(.csr(test_csrs[i]), .value(wdata), .blocking(0), .predict(!external_checker));
 
       all_csrs.shuffle();
       foreach (all_csrs[j]) begin

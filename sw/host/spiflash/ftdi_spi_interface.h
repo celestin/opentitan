@@ -16,25 +16,51 @@ namespace spiflash {
 // Forward declaration used to hide MPSSE context.
 struct MpsseHandle;
 
-// Implements SPI interface for an OpenTitan design connected via FTDI.
-// FTDI provides an USB interface called Multi-Protocol Synchronous Serial
-// Engine (MPSSE) which gives access to SPI, I2C and JTAG. This class uses
-// MPSSE to communicate with the SPI device IP in OpenTitan.
-// This class is not thread safe.
+/**
+ * Implements SPI interface for an OpenTitan design connected via FTDI.
+ * FTDI provides an USB interface called Multi-Protocol Synchronous Serial
+ * Engine (MPSSE) which gives access to SPI, I2C and JTAG. This class uses
+ * MPSSE to communicate with the SPI device IP in OpenTitan.
+ * This class is not thread safe.
+ */
 class FtdiSpiInterface : public SpiInterface {
  public:
-  FtdiSpiInterface();
+  /** FTDI SPI configuration options. */
+  struct Options {
+    /** USB device vendor ID. */
+    int32_t device_vendor_id = 0;
+
+    /** USB device product ID. */
+    int32_t device_product_id = 0;
+
+    /** USB device serial number. */
+    std::string device_serial_number;
+
+    /** Time to wait between attempts to check the hash in microseconds. */
+    int32_t hash_read_delay_us = 10000;
+
+    /** Time to wait between reading the hash over SPI and checking it in
+     *  microseconds. */
+    int32_t hash_check_delay_us = 10000;
+
+    /** Time before giving up on looking for the correct hash in
+     *  microseconds. */
+    int32_t hash_read_timeout_us = 400000;
+
+    /** FTDI Configuration. This can be made configurable later on if needed.
+     * Frequency in Hz. Default value is 1MHz. */
+    int32_t spi_frequency = 1000000;
+  };
+
+  explicit FtdiSpiInterface(Options options);
   ~FtdiSpiInterface() override;
 
-  // Initialize interface.
   bool Init() final;
-
-  // Transmit bytes from `tx` buffer. The number of bytes are defined by `size`.
   bool TransmitFrame(const uint8_t *tx, size_t size) final;
-
   bool CheckHash(const uint8_t *tx, size_t size) final;
 
  private:
+  Options options_;
   std::unique_ptr<MpsseHandle> spi_;
 };
 

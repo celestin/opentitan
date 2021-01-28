@@ -10,7 +10,7 @@ package alert_handler_env_pkg;
   import csr_utils_pkg::*;
   import tl_agent_pkg::*;
   import alert_esc_agent_pkg::*;
-  import dv_lib_pkg::*;
+  import dv_base_reg_pkg::*;
   import cip_base_pkg::*;
   import alert_handler_ral_pkg::*;
 
@@ -18,8 +18,12 @@ package alert_handler_env_pkg;
   `include "uvm_macros.svh"
   `include "dv_macros.svh"
 
+  // this file could be auto-generated for top_earlgrey alert_handler
+  // the path to this file should be provided in alert_handler*_sim.core
+  `include "alert_handler_env_pkg__params.sv"
+
   // parameters
-  parameter uint ALERT_HANDLER_ADDR_MAP_SIZE = 256;
+  parameter uint NUM_ESCS                    = 4;
   parameter uint NUM_MAX_ESC_SEV             = 8;
   parameter uint NUM_ESC_SIGNALS             = 4;
   parameter uint NUM_ALERT_HANDLER_CLASSES   = 4;
@@ -27,7 +31,11 @@ package alert_handler_env_pkg;
   parameter uint NUM_ALERT_HANDLER_CLASS_MSB = $clog2(NUM_ALERT_HANDLER_CLASSES) - 1;
   parameter uint MIN_CYCLE_PER_PHASE         = 2;
   parameter uint NUM_LOCAL_ALERT             = 4;
-
+  // ignore esc signal cycle count after ping occurs - as ping response might ended up adding one
+  // extra cycle to the calculated cnt, or even combine two signals into one.
+  parameter uint IGNORE_CNT_CHECK_NS         = 100_000_000;
+  // set the max ping timeout cycle to constrain the simulation run time
+  parameter uint MAX_PING_TIMEOUT_CYCLE     = 100;
   // types
   typedef enum {
     EscPhase0,
@@ -50,13 +58,13 @@ package alert_handler_env_pkg;
   } alert_class_ctrl_e;
 
   typedef enum {
-    EscStateIdle,
-    EscStateTimeout,
-    EscStateTerminal,
-    EscStatePhase0,
-    EscStatePhase1,
-    EscStatePhase2,
-    EscStatePhase3
+    EscStateIdle     = 'b000,
+    EscStateTimeout  = 'b001,
+    EscStateTerminal = 'b011,
+    EscStatePhase0   = 'b100,
+    EscStatePhase1   = 'b101,
+    EscStatePhase2   = 'b110,
+    EscStatePhase3   = 'b111
   } esc_state_e;
 
   typedef enum {

@@ -9,54 +9,25 @@
 
 `include "prim_assert.sv"
 
-`ifndef PRIM_DEFAULT_IMPL
-  `define PRIM_DEFAULT_IMPL prim_pkg::ImplGeneric
-`endif
-
-module padctrl #(
-  parameter prim_pkg::impl_e Impl = `PRIM_DEFAULT_IMPL
-) (
-  input                                       clk_i,
-  input                                       rst_ni,
+module padctrl import padctrl_reg_pkg::*; (
+  input                                  clk_i,
+  input                                  rst_ni,
   // Bus Interface (device)
-  input  tlul_pkg::tl_h2d_t                   tl_i,
-  output tlul_pkg::tl_d2h_t                   tl_o,
+  input  tlul_pkg::tl_h2d_t              tl_i,
+  output tlul_pkg::tl_d2h_t              tl_o,
   // pad attributes to chip level instance
-  output logic[padctrl_reg_pkg::NMioPads-1:0]
-              [padctrl_reg_pkg::AttrDw-1:0]   mio_attr_o,
-  output logic[padctrl_reg_pkg::NDioPads-1:0]
-              [padctrl_reg_pkg::AttrDw-1:0]   dio_attr_o
+  output logic[NMioPads-1:0][AttrDw-1:0] mio_attr_o,
+  output logic[NDioPads-1:0][AttrDw-1:0] dio_attr_o
 );
-
-  import prim_pkg::*;
-
-  //////////////////
-  // WARL Control //
-  //////////////////
-
-  // This controls the WARL'ness of the CSRs
-  // needs to be in line with the corresponding
-  // prim_pad_wrapper implementation
-  logic [padctrl_reg_pkg::AttrDw-1:0] warl_mask;
-  if (Impl == ImplGeneric) begin : gen_generic
-    // all attributes supported
-    assign warl_mask = padctrl_reg_pkg::AttrDw'(6'h3F);
-  end else if (Impl == ImplXilinx) begin : gen_xilinx
-    // only OD and INV supported
-    assign warl_mask = padctrl_reg_pkg::AttrDw'(2'h3);
-  end else begin : gen_failure
-    assign warl_mask = 'X;
-    // TODO: Find code that works across tools and causes a compile failure
-  end
 
   /////////////
   // Regfile //
   /////////////
 
-  padctrl_reg_pkg::padctrl_reg2hw_t reg2hw;
-  padctrl_reg_pkg::padctrl_hw2reg_t hw2reg;
+  padctrl_reg2hw_t reg2hw;
+  padctrl_hw2reg_t hw2reg;
 
-  padctrl_reg_top i_reg_top (
+  padctrl_reg_top u_reg (
     .clk_i  ,
     .rst_ni ,
     .tl_i   ,
@@ -70,8 +41,8 @@ module padctrl #(
   // HWEXT Regs //
   ////////////////
 
-  logic [padctrl_reg_pkg::NDioPads-1:0][padctrl_reg_pkg::AttrDw-1:0] dio_attr_q;
-  logic [padctrl_reg_pkg::NMioPads-1:0][padctrl_reg_pkg::AttrDw-1:0] mio_attr_q;
+  logic [NDioPads-1:0][AttrDw-1:0] dio_attr_q;
+  logic [NMioPads-1:0][AttrDw-1:0] mio_attr_q;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin : p_regs
     if (!rst_ni) begin
@@ -79,13 +50,13 @@ module padctrl #(
       mio_attr_q <= '0;
     end else begin
       // dedicated pads
-      for (int kk = 0; kk < padctrl_reg_pkg::NDioPads; kk++) begin
+      for (int kk = 0; kk < NDioPads; kk++) begin
         if (reg2hw.dio_pads[kk].qe) begin
           dio_attr_q[kk] <= reg2hw.dio_pads[kk].q;
         end
       end
       // muxed pads
-      for (int kk = 0; kk < padctrl_reg_pkg::NMioPads; kk++) begin
+      for (int kk = 0; kk < NMioPads; kk++) begin
         if (reg2hw.mio_pads[kk].qe) begin
           mio_attr_q[kk] <= reg2hw.mio_pads[kk].q;
         end
@@ -97,14 +68,43 @@ module padctrl #(
   // Connect attributes //
   ////////////////////////
 
-  // using the warl_mask here instead instead of in the register assignment above
-  // avoids lint errors. the unused registers can be removed automatically by most tools.
-  for (genvar k = 0; k < padctrl_reg_pkg::NDioPads; k++) begin : gen_dio_attr
+  // Note that these are not real pad instances. We only query the supported attributes here
+  for (genvar k = 0; k < NDioPads; k++) begin : gen_dio_attr
+    logic [AttrDw-1:0] warl_mask;
+
+    prim_generic_pad_wrapper #(
+      .AttrDw   ( AttrDw        ),
+      .WarlOnly ( 1'b1          ) // this prevents instantiation of pad logic
+    ) i_prim_generic_pad_wrapper (
+      .inout_io (               ),
+      .in_o     (               ),
+      .ie_i     ( 1'b0          ),
+      .out_i    ( 1'b0          ),
+      .oe_i     ( 1'b0          ),
+      .attr_i   ( '0            ),
+      .warl_o   ( warl_mask     )
+    );
+
     assign dio_attr_o[k]        = dio_attr_q[k] & warl_mask;
     assign hw2reg.dio_pads[k].d = dio_attr_q[k] & warl_mask;
   end
 
-  for (genvar k = 0; k < padctrl_reg_pkg::NMioPads; k++) begin : gen_mio_attr
+  for (genvar k = 0; k < NMioPads; k++) begin : gen_mio_attr
+    logic [AttrDw-1:0] warl_mask;
+
+    prim_generic_pad_wrapper #(
+      .AttrDw   ( AttrDw        ),
+      .WarlOnly ( 1'b1          ) // this prevents instantiation of pad logic
+    ) i_prim_generic_pad_wrapper (
+      .inout_io (               ),
+      .in_o     (               ),
+      .ie_i     ( 1'b0          ),
+      .out_i    ( 1'b0          ),
+      .oe_i     ( 1'b0          ),
+      .attr_i   ( '0            ),
+      .warl_o   ( warl_mask     )
+    );
+
     assign mio_attr_o[k]        = mio_attr_q[k] & warl_mask;
     assign hw2reg.mio_pads[k].d = mio_attr_q[k] & warl_mask;
   end

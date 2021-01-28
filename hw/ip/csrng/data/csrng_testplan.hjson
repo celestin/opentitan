@@ -1,0 +1,69 @@
+// Copyright lowRISC contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+{
+  name: "csrng"
+  import_testplans: ["hw/dv/tools/dvsim/testplans/csr_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/intr_test_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/alert_test_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/tl_device_access_types_testplan.hjson",
+                     "hw/dv/tools/dvsim/testplans/stress_all_with_reset_testplan.hjson"]
+  entries: [
+    {
+      name: smoke
+      desc: '''
+            Enable csrng, send instantiate/generate cmds, verify 0-seed genbits/interrupt.
+            '''
+      milestone: V1
+      tests: ["csrng_smoke"]
+    }
+    {
+      name: firmware
+      desc: '''
+            Verify ability to access SW app registers based on value of efuse input
+            Verify regen bit enables/disables write access to control registers
+            '''
+      milestone: V2
+      tests: []
+    }
+    {
+      name: interrupts
+      desc: '''
+            Verify csrng cmd_req_done interrupt assert/clear when expected/predicted.
+            Verify csrng entropy_req interrupt assert/clear when expected/predicted.
+            Verify csrng hw_inst_exc interrupt assert/clear when expected/predicted.
+            Verify csrng intr_fifo_err interrupt assert/clear when expected/predicted.
+            '''
+      milestone: V2
+      tests: []
+    }
+    {
+      name: cmds
+      desc: '''
+            Verify all SW app csrng commands req/status behave as predicted.
+            Verify all HW app csrng commands req/status behave as predicted.
+            Verify above for all valid values of acmd, clen, flags, glen.
+            Verify for multiple hw app interfaces running in parallel.
+            '''
+      milestone: V2
+      tests: []
+    }
+    {
+      name: genbits
+      desc: '''
+            Verify genbits generated as predicted.
+            Verify fips bits as predicted.
+            Verify for multiple hw app interfaces running in parallel.
+            '''
+      milestone: V2
+      tests: []
+    }
+    {
+      name: stress_all
+      desc: '''
+            Combine the other individual testpoints while injecting TL errors and running CSR tests in parallel.'''
+      milestone: V2
+      tests: ["csrng_stress_all"]
+    }
+  ]
+}

@@ -1,4 +1,6 @@
-# Work with hardware code in external repositories
+---
+title: Work with hardware code in external repositories
+---
 
 OpenTitan is not a closed ecosystem: we incorporate code from third parties, and we split out pieces of our code to reach a wider audience.
 In both cases, we need to import and use code from external repositories in our OpenTitan code base.
@@ -84,7 +86,7 @@ $ cat hw/vendor/lowrisc_ibex.vendor.hjson
 
 This description file essentially says:
 We vendor a component called "lowrisc_ibex" and place the code into the "lowrisc_ibex" directory (relative to the description file).
-The code comes from the master branch of the Git repository found at https://github.com/lowRISC/ibex.git.
+The code comes from the `master` branch of the Git repository found at https://github.com/lowRISC/ibex.git.
 
 With this description file written, the `util/vendor` tool can do its job.
 
@@ -311,7 +313,7 @@ Example:
 // section of a .vendor.hjson file
 exclude_from_upstream: [
   // exclude all *.h files in the src directory
-  "src/*.h*",
+  "src/*.h",
   // exclude the src_files.yml file
   "src_files.yml",
   // exclude some_directory and all files below it

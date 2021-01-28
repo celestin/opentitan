@@ -1,6 +1,9 @@
+// Copyright lowRISC contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
 {
   name: "rv_plic"
-  import_testplans: ["hw/dv/tools/testplans/fpv_csr_testplan.hjson"]
+  import_testplans: ["hw/dv/tools/dvsim/testplans/fpv_csr_testplan.hjson"]
   entries: [
     {
       name: LevelTriggeredIp_A

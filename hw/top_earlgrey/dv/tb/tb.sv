@@ -10,6 +10,7 @@ module tb;
   import chip_env_pkg::*;
   import top_pkg::*;
   import chip_test_pkg::*;
+  import xbar_test_pkg::*;
 
   // macro includes
   `include "uvm_macros.svh"
@@ -29,34 +30,50 @@ module tb;
 
   wire spi_device_sck;
   wire spi_device_csb;
-  wire spi_device_miso_o;
-  wire spi_device_mosi_i;
+  wire spi_device_sdo_o;
+  wire spi_device_sdi_i;
 
   wire srst_n;
   wire jtag_spi_n;
   wire bootstrap;
   wire [7:0] io_dps;
 
-  wire usb_dp0, usb_dn0, usb_sense0, usb_pullup0;
+  wire usb_dp0, usb_dn0, usb_sense0, usb_dppullup0, usb_dnpullup0;
+
+  wire uart_rx, uart_tx;
 
   bit stub_cpu;
+  bit en_sim_sram = 1'b1;
+
+  // internal clocks and resets
+  // cpu clock cannot reference cpu_hier since cpu clocks are forced off in stub_cpu mode
+  wire cpu_clk = `CLKMGR_HIER.clocks_o.clk_proc_main;
+  wire cpu_rst_n = `CPU_HIER.rst_ni;
+  wire alert_handler_clk = `ALERT_HANDLER_HIER.clk_i;
 
   // interfaces
-  clk_rst_if clk_rst_if(.clk(clk), .rst_n(rst_n));
+  clk_rst_if clk_rst_if(.clk, .rst_n);
   clk_rst_if usb_clk_rst_if(.clk(usb_clk), .rst_n(usb_rst_n));
+  alert_esc_if alert_if[NUM_ALERTS](.clk(alert_handler_clk), .rst_n(rst_n));
   pins_if #(NUM_GPIOS) gpio_if(.pins(gpio_pins));
   pins_if #(1) srst_n_if(.pins(srst_n));
   pins_if #(1) jtag_spi_n_if(.pins(jtag_spi_n));
   pins_if #(1) bootstrap_if(.pins(bootstrap));
-  spi_if spi_if(.rst_n(rst_n));
-  tl_if   cpu_d_tl_if(.clk(clk), .rst_n(rst_n));
+  pins_if #(1) rst_n_mon_if(.pins(cpu_rst_n));
+  spi_if spi_if(.rst_n);
+  tl_if cpu_d_tl_if(.clk(cpu_clk), .rst_n(cpu_rst_n));
   uart_if uart_if();
   jtag_if jtag_if();
 
   // backdoors
   bind `ROM_HIER mem_bkdr_if rom_mem_bkdr_if();
+  bind `RAM_MAIN_HIER mem_bkdr_if ram_mem_bkdr_if();
+  bind `RAM_RET_HIER mem_bkdr_if ram_mem_bkdr_if();
   bind `FLASH0_MEM_HIER mem_bkdr_if flash0_mem_bkdr_if();
   bind `FLASH1_MEM_HIER mem_bkdr_if flash1_mem_bkdr_if();
+  bind `FLASH0_INFO_HIER mem_bkdr_if flash0_info_bkdr_if();
+  bind `FLASH1_INFO_HIER mem_bkdr_if flash1_info_bkdr_if();
+  bind `OTP_MEM_HIER mem_bkdr_if otp_bkdr_if();
 
   top_earlgrey_asic dut (
     // Clock and Reset
@@ -75,14 +92,15 @@ module tb;
     .IO_DPS7          (io_dps[7]),
 
     // UART interface
-    .IO_URX           (uart_if.uart_rx),
-    .IO_UTX           (uart_if.uart_tx),
+    .IO_URX           (uart_rx),
+    .IO_UTX           (uart_tx),
 
     // USB interface
     .IO_USB_DP0       (usb_dp0),
     .IO_USB_DN0       (usb_dn0),
     .IO_USB_SENSE0    (usb_sense0),
-    .IO_USB_PULLUP0   (usb_pullup0),
+    .IO_USB_DNPULLUP0 (usb_dppullup0),
+    .IO_USB_DPPULLUP0 (usb_dnpullup0),
 
     // GPIO x 16 interface
     .IO_GP0           (gpio_pins[0 ]),
@@ -103,50 +121,16 @@ module tb;
     .IO_GP15          (gpio_pins[15])
   );
 
-  // connect sw_logger_if
-  parameter string SwTypes[] = '{"rom", "sw"};
-  generate
-    for (genvar i = 0; i < 2; i++) begin: sw_logger_if_i
-      bit             sw_log_valid;
-      bit [TL_AW-1:0] sw_log_addr;
-
-      sw_logger_if sw_logger_if (
-        .clk          (`RAM_MAIN_HIER.clk_i),
-        .rst_n        (`RAM_MAIN_HIER.rst_ni),
-        .valid        (sw_log_valid),
-        .addr_data    (`RAM_MAIN_HIER.wdata_i),
-        .sw_log_addr  (sw_log_addr)
-      );
-      // TODO: RAM only looks at addr[15:2] - need to find a better way to capture it.
-      assign sw_log_valid = !stub_cpu &&
-                            `RAM_MAIN_HIER.req_i && `RAM_MAIN_HIER.write_i &&
-                            (`RAM_MAIN_HIER.addr_i == sw_log_addr[15:2]);
-
-      initial begin
-        uvm_config_db#(virtual sw_logger_if)::set(
-            null, "*.env", $sformatf("sw_logger_vif[%0s]", SwTypes[i]), sw_logger_if);
-      end
-    end
-  endgenerate
-
-  // connect the sw_test_status_if
-  sw_test_status_if sw_test_status_if();
-  assign sw_test_status_if.valid =  !stub_cpu &&
-                                    `RAM_MAIN_HIER.req_i && `RAM_MAIN_HIER.write_i &&
-                                    (`RAM_MAIN_HIER.addr_i ==
-                                     sw_test_status_if.sw_test_status_addr[15:2]);
-  assign sw_test_status_if.sw_test_status_val = `RAM_MAIN_HIER.wdata_i;
-
   // connect signals
   assign io_dps[0]  = jtag_spi_n ? jtag_tck : spi_device_sck;
-  assign io_dps[1]  = jtag_spi_n ? jtag_tdi : spi_device_mosi_i;
+  assign io_dps[1]  = jtag_spi_n ? jtag_tdi : spi_device_sdi_i;
   assign io_dps[3]  = jtag_spi_n ? jtag_tms : spi_device_csb;
   assign io_dps[4]  = jtag_trst_n;
   assign io_dps[5]  = srst_n;
   assign io_dps[6]  = jtag_spi_n;
   assign io_dps[7]  = bootstrap;
-  assign spi_device_miso_o  = jtag_spi_n ? 1'b0 : io_dps[2];
-  assign jtag_tdo           = jtag_spi_n ? io_dps[2] : 1'b0;
+  assign spi_device_sdo_o  = jtag_spi_n ? 1'b0 : io_dps[2];
+  assign jtag_tdo          = jtag_spi_n ? io_dps[2] : 1'b0;
 
   assign jtag_tck         = jtag_if.tck;
   assign jtag_tms         = jtag_if.tms;
@@ -156,8 +140,11 @@ module tb;
 
   assign spi_device_sck     = spi_if.sck;
   assign spi_device_csb     = spi_if.csb;
-  assign spi_device_mosi_i  = spi_if.mosi;
-  assign spi_if.miso        = spi_device_miso_o;
+  assign spi_device_sdi_i   = spi_if.sdi;
+  assign spi_if.sdo         = spi_device_sdo_o;
+
+  assign uart_rx = uart_if.uart_rx;
+  assign uart_if.uart_tx = uart_tx;
 
   // TODO: USB-related signals, hookup an interface.
   assign usb_rst_n  = `USBDEV_HIER.rst_usb_48mhz_ni;
@@ -165,12 +152,60 @@ module tb;
   assign usb_dn0    = 1'b0;
   assign usb_sense0 = 1'b0;
 
+  `define SIM_SRAM_IF u_sim_sram.u_sim_sram_if
+
+  // Instantiate & connect the simulation SRAM inside the CPU (rv_core_ibex) using forces.
+  sim_sram u_sim_sram (
+    .clk_i    (`CPU_HIER.clk_i),
+    .rst_ni   (`CPU_HIER.rst_ni),
+    .tl_in_i  (`CPU_HIER.tl_d_o_int),
+    .tl_in_o  (),
+    .tl_out_o (),
+    .tl_out_i (`CPU_HIER.tl_d_i)
+  );
+
+  initial begin
+    void'($value$plusargs("en_sim_sram=%0b", en_sim_sram));
+    if (!stub_cpu && en_sim_sram) begin
+      `SIM_SRAM_IF.start_addr = SW_DV_START_ADDR;
+      force `CPU_HIER.tl_d_i_int = u_sim_sram.tl_in_o;
+      force `CPU_HIER.tl_d_o = u_sim_sram.tl_out_o;
+    end else begin
+      force u_sim_sram.clk_i = 1'b0;
+    end
+  end
+
+  // Bind the SW test status interface directly to the sim SRAM interface.
+  bind `SIM_SRAM_IF sw_test_status_if u_sw_test_status_if (
+    .addr (tl_h2d.a_address),
+    .data (tl_h2d.a_data[15:0]),
+    .*
+  );
+
+  // Bind the SW logger interface directly to the sim SRAM interface.
+  bind `SIM_SRAM_IF sw_logger_if u_sw_logger_if (
+    .addr (tl_h2d.a_address),
+    .data (tl_h2d.a_data),
+    .*
+  );
+
+  // connect alert rx/tx to alert_if
+  for (genvar k = 0; k < NUM_ALERTS; k++) begin : gen_connect_alerts_pins
+    assign alert_if[k].alert_rx = `ALERT_HANDLER_HIER.alert_rx_o[k];
+    initial begin
+      uvm_config_db#(virtual alert_esc_if)::set(null, $sformatf("*.env.m_alert_agent_%0s",
+          LIST_OF_ALERTS[k]), "vif", alert_if[k]);
+    end
+  end : gen_connect_alerts_pins
+
   initial begin
     // Set clk_rst_vifs
-    // drive clk and rst_n from clk_if
+    // drive rst_n from clk_if
+    // clk_rst_if references internal clock created by ast
     clk_rst_if.set_active();
     usb_clk_rst_if.set_active(.drive_clk_val(1'b1), .drive_rst_n_val(1'b0));
-    uvm_config_db#(virtual clk_rst_if)::set(null, "*.env", "clk_rst_vif", clk_rst_if);
+    // clk_rst_if will be gotten by env and env.scoreboard (for xbar)
+    uvm_config_db#(virtual clk_rst_if)::set(null, "*.env*", "clk_rst_vif", clk_rst_if);
     uvm_config_db#(virtual clk_rst_if)::set(null, "*.env", "usb_clk_rst_vif", usb_clk_rst_if);
 
     // IO Interfaces
@@ -187,20 +222,43 @@ module tb;
         null, "*.env", "jtag_spi_n_vif", jtag_spi_n_if);
     uvm_config_db#(virtual pins_if #(1))::set(
         null, "*.env", "bootstrap_vif", bootstrap_if);
+    uvm_config_db#(virtual pins_if #(1))::set(
+        null, "*.env", "rst_n_mon_vif", rst_n_mon_if);
 
     // Backdoors
     uvm_config_db#(virtual mem_bkdr_if)::set(
         null, "*.env", "mem_bkdr_vifs[Rom]", `ROM_HIER.rom_mem_bkdr_if);
     uvm_config_db#(virtual mem_bkdr_if)::set(
+        null, "*.env", "mem_bkdr_vifs[RamMain]", `RAM_MAIN_HIER.ram_mem_bkdr_if);
+    uvm_config_db#(virtual mem_bkdr_if)::set(
+        null, "*.env", "mem_bkdr_vifs[RamRet]", `RAM_RET_HIER.ram_mem_bkdr_if);
+    uvm_config_db#(virtual mem_bkdr_if)::set(
         null, "*.env", "mem_bkdr_vifs[FlashBank0]", `FLASH0_MEM_HIER.flash0_mem_bkdr_if);
     uvm_config_db#(virtual mem_bkdr_if)::set(
         null, "*.env", "mem_bkdr_vifs[FlashBank1]", `FLASH1_MEM_HIER.flash1_mem_bkdr_if);
+    uvm_config_db#(virtual mem_bkdr_if)::set(
+        null, "*.env", "mem_bkdr_vifs[FlashBank0Info]", `FLASH0_INFO_HIER.flash0_info_bkdr_if);
+    uvm_config_db#(virtual mem_bkdr_if)::set(
+        null, "*.env", "mem_bkdr_vifs[FlashBank1Info]", `FLASH1_INFO_HIER.flash1_info_bkdr_if);
+    uvm_config_db#(virtual mem_bkdr_if)::set(
+        null, "*.env", "mem_bkdr_vifs[Otp]", `OTP_MEM_HIER.otp_bkdr_if);
+
+    // SW logger and test status interfaces.
     uvm_config_db#(virtual sw_test_status_if)::set(
-        null, "*.env", "sw_test_status_vif", sw_test_status_if);
+        null, "*.env", "sw_test_status_vif", `SIM_SRAM_IF.u_sw_test_status_if);
+    uvm_config_db#(virtual sw_logger_if)::set(
+        null, "*.env", "sw_logger_vif", `SIM_SRAM_IF.u_sw_logger_if);
+
+    // temp disable pinmux assertion AonWkupReqKnownO_A because driving X in spi_device.sdi and
+    // WkupPadSel choose IO_DPS1 in MIO will trigger this assertion
+    // TODO: remove this assertion once pinmux is templatized
+    $assertoff(0, dut.top_earlgrey.u_pinmux.AonWkupReqKnownO_A);
 
     $timeformat(-12, 0, " ps", 12);
     run_test();
   end
+
+  `undef SIM_SRAM_IF
 
   // stub cpu environment
   // if enabled, clock to cpu is forced to 0
@@ -215,5 +273,23 @@ module tb;
     end
   end
   assign cpu_d_tl_if.d2h = `CPU_HIER.tl_d_i;
+
+  // otp test_access memory is only accessible after otp_init and lc_dft_en = 1.
+  // TODO: remove them once the otp/pwr otp/lc connections are completed.
+  initial begin
+    string common_seq_type, csr_seq_type;
+    void'($value$plusargs("run_%0s", common_seq_type));
+    void'($value$plusargs("csr_%0s", csr_seq_type));
+    if (common_seq_type inside {"mem_partial_access", "tl_errors"} ||
+        csr_seq_type == "mem_walk") begin
+      force tb.dut.top_earlgrey.u_otp_ctrl.lc_dft_en_i = 4'b1010;
+    end
+  end
+
+  // Control assertions in the DUT with UVM resource string "dut_assert_en".
+  `DV_ASSERT_CTRL("dut_assert_en", tb.dut)
+
+  `include "../autogen/tb__xbar_connect.sv"
+  `include "../autogen/tb__alert_handler_connect.sv"
 
 endmodule

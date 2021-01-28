@@ -8,7 +8,6 @@
 #  - n_alerts:    Number of alert sources
 #  - esc_cnt_dw:  Width of escalation counter
 #  - accu_cnt_dw: Width of accumulator
-#  - lfsr_seed:   Seed for LFSR timer
 #  - async_on:    Enables asynchronous sygnalling between specific alert RX/TX pairs
 #  - n_classes:   Number of supported classes (leave this at 4 at the moment)
 <%
@@ -20,8 +19,23 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
   clock_primary: "clk_i",
   bus_device: "tlul",
   regwidth: "32",
+  hier_path: "i_reg_wrap"
 ##############################################################################
   param_list: [
+    // Random netlist constants
+    { name:      "RndCnstLfsrSeed",
+      desc:      "Compile-time random bits for initial LFSR seed",
+      type:      "alert_pkg::lfsr_seed_t"
+      randcount: "32",
+      randtype:  "data", // randomize randcount databits
+    }
+    { name:      "RndCnstLfsrPerm",
+      desc:      "Compile-time random permutation for LFSR output",
+      type:      "alert_pkg::lfsr_perm_t"
+      randcount: "32",
+      randtype:  "perm", // random permutation for randcount elements
+    }
+    // Normal parameters
     { name: "NAlerts",
       desc: "Number of peripheral inputs",
       type: "int",
@@ -38,12 +52,6 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
       desc: "Number of peripheral outputs",
       type: "int",
       default: "${accu_cnt_dw}",
-      local: "true"
-    },
-    { name: "LfsrSeed",
-      desc: "Number of peripheral outputs",
-      type: "int",
-      default: "${lfsr_seed}",
       local: "true"
     },
     { name: "AsyncOn",
@@ -95,6 +103,36 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
       local: "true"
     },
   ],
+
+  inter_signal_list: [
+    { struct:  "alert_crashdump",
+      type:    "uni",
+      name:    "crashdump",
+      act:     "req",
+      package: "alert_pkg"
+    },
+    // TODO: connect this to EDN
+    { struct:  "logic",
+      type:    "uni",
+      name:    "entropy",
+      default: " 1'b0",
+      act:     "rcv",
+    },
+    { struct:  "esc_rx"
+      type:    "uni"
+      name:    "esc_rx"
+      act:     "rcv"
+      width:   "4", // N_ESC_SEV
+      package: "prim_esc_pkg"
+    },
+    { struct:  "esc_tx"
+      type:    "uni"
+      name:    "esc_tx"
+      act:     "req"
+      width:   "4", // N_ESC_SEV
+      package: "prim_esc_pkg"
+    },
+  ]
 ##############################################################################
 # interrupt registers for the classes
   interrupt_list: [
@@ -148,6 +186,7 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
     }
 ##############################################################################
 # all alerts
+    {skipto: "0x20"},
     { multireg: { name:     "ALERT_EN",
                   desc:     '''Enable register for alerts.
                   ''',
@@ -156,7 +195,10 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
                   hwaccess: "hro",
                   regwen:   "REGEN",
                   cname:    "alert",
-                  fields: [
+                  tags:     [// Enable `alert_en` might cause top-level escalators to trigger
+                             // unexpected reset
+                             "excl:CsrAllTests:CsrExclWrite"]
+                 fields: [
                     { bits: "0",
                       name: "EN_A",
                       desc: "Alert enable "
@@ -164,6 +206,7 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
                   ]
                 }
     },
+    {skipto: "0x120"},
     { multireg: { name:     "ALERT_CLASS",
                   desc:     '''Class assignment of alerts.
                   ''',
@@ -187,6 +230,7 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
                   ]
                 }
     },
+    {skipto: "0x220"},
     { multireg: {
       name: "ALERT_CAUSE",
       desc: "Alert Cause Register",
@@ -196,11 +240,15 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
       hwaccess: "hrw",
       fields: [
         { bits: "0", name: "A", desc: "Cause bit " }
-      ]
+      ],
+      tags: [// The value of this register is determined by triggering different kinds of alerts
+             // Cannot be auto-predicted so excluded from read check
+             "excl:CsrNonInitTests:CsrExclWriteCheck"]
       }
     },
 ##############################################################################
 # local alerts
+    {skipto: "0x320"},
     { multireg: { name:     "LOC_ALERT_EN",
                   desc:     '''Enable register for the aggregated local alerts "alert
                   pingfail" (0), "escalation pingfail" (1), "alert integfail" (2) and "escalation integfail" (3).
@@ -251,6 +299,11 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
       cname: "LOC_ALERT",
       swaccess: "rw1c",
       hwaccess: "hrw",
+      tags: [// Top level CSR automation test, CPU clock is disabled, so escalation response will
+             // not send back to alert handler. This will set loc_alert_cause and could not predict
+             // automatically.
+             // TODO: remove the exclusion after set up top-level esc_receiver_driver
+             "excl:CsrNonInitTests:CsrExclCheck"],
       fields: [
         { bits: "0", name: "LA", desc: "Cause bit " }
       ]
@@ -340,7 +393,11 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
           ''',
           resval: 1,
         }
-      ]
+      ],
+      tags: [// The value of this register is set to false only by hardware,
+             // under the condition that escalation is triggered and the corresponding lock bit is true
+             // Cannot not be auto-predicted so it is excluded from read check
+             "excl:CsrNonInitTests:CsrExclWriteCheck"]
     },
     { name:     "CLASS${chars[i]}_CLR",
       desc:     '''
@@ -368,7 +425,10 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
       hwext:    "true",
       fields: [
         { bits: "${accu_cnt_dw - 1}:0" }
-      ]
+      ],
+      tags: [// The value of this register is determined by how many alerts have been triggered
+             // Cannot be auto-predicted so it is excluded from read check
+             "excl:CsrNonInitTests:CsrExclWriteCheck"]
     },
     { name:     "CLASS${chars[i]}_ACCUM_THRESH",
       desc:     '''
@@ -440,7 +500,10 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
           is set to false (either by SW or by HW via the !!CLASS${chars[i]}_CTRL.LOCK feature).
           '''
         }
-      ]
+      ],
+      tags: [// The value of this register is determined by counting how many cycles the escalation phase has lasted
+             // Cannot be auto-predicted so excluded from read check
+             "excl:CsrNonInitTests:CsrExclWriteCheck"]
     },
     { name:     "CLASS${chars[i]}_STATE",
       desc:     '''
@@ -461,7 +524,10 @@ chars = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
                   { value: "0b111", name: "Phase3",   desc: "Escalation Phase3 is active." }
                 ]
         }
-      ]
+      ],
+      tags: [// The current escalation state cannot be auto-predicted
+             // so this register is excluded from read check
+             "excl:CsrNonInitTests:CsrExclWriteCheck"]
     },
 % endfor
   ],

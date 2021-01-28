@@ -12,6 +12,14 @@ import mistletoe
 from tabulate import tabulate
 
 
+class TestResult:
+    '''The results for a single test'''
+    def __init__(self, name):
+        self.name = name
+        self.passing = 0
+        self.total = 0
+
+
 class TestplanEntry():
     """An entry in the testplan
 
@@ -304,15 +312,27 @@ class Testplan():
             if fmt == "html":
                 desc = mistletoe.markdown(desc)
             table.append([entry.milestone, entry.name, desc, tests])
-        return tabulate(table,
-                        headers="firstrow",
-                        tablefmt=fmt,
-                        colalign=colalign)
+        result = tabulate(table,
+                          headers="firstrow",
+                          tablefmt=fmt,
+                          colalign=colalign)
+        result = result.replace("&lt;", "<")
+        result = result.replace("&gt;", ">")
+        return result
 
-    def results_table(self, regr_results, map_full_testplan=True, fmt="pipe"):
+    def results_table(self, test_results, map_full_testplan=True, fmt="pipe"):
         '''Print the mapped regression results into a table in the format
         specified by the 'fmt' arg.
+
+        test_results should be a list of TestResult objects, one for each named
+        test.
+
         '''
+        # Generate a list of dictionaries as expected by map_regr_results. In
+        # future, that code could be tightened up to use proper classes too,
+        # but let's put a shim here for now.
+        regr_results = [{"name": tr.name, "passing": tr.passing, "total": tr.total}
+                        for tr in test_results]
         self.map_regr_results(regr_results, map_full_testplan)
         table = [[
             "Milestone", "Name", "Tests", "Passing", "Total", "Pass Rate"

@@ -17,60 +17,61 @@ FP_NUMBER = r"[-+]?\d+\.\d+[Ee]?[-+]?\d*"
 CROSSCHECK_REL_TOL = 0.001
 
 
-def _match_strings(full_file, master_key, patterns, results):
+def _match_fp_number(full_file, patterns):
+    """Extract numbers from patterns in full_file (a string)
+
+    patterns is a list of pairs, (key, pattern). Each pattern should be a
+    regular expression with exactly one capture group. Any match for group will
+    be parsed as a float.
+
+    Returns a pair (nums, errs) where nums is a dictionary keyed by the keys in
+    patterns. The value at K is a list of floats matching patterns[K] if there
+    was more than one match. If there was exactly one match for the
+    patterns[K], the value at K is that float (rather than a singleton list).
+
+    errs is a list of error messages (caused by failed float conversions or
+    when there is no match for a pattern).
+
     """
-    This searches for string patterns in the full_file buffer.
-    The argument patterns needs to be a list of tuples with
-    (<error_severity>, <pattern_to_match_for>).
+    nums = {}
+    errs = []
+    for key, pattern in patterns:
+        floats = []
+        matches = re.findall(pattern, full_file, flags=re.MULTILINE)
+        if not matches:
+            errs.append('Pattern {!r} of key {!r} not found'
+                        .format(pattern, key))
+            continue
+
+        for match in matches:
+            try:
+                floats.append(float(match))
+            except ValueError as err:
+                errs.append('ValueError: {}'.format(err))
+
+        if floats:
+            nums[key] = floats[0] if len(floats) == 1 else floats
+
+    return (nums, errs)
+
+
+def _extract_messages(full_file, results, key, args):
     """
-    for severity, pattern in patterns:
-        results[master_key][severity] += re.findall(pattern,
+    This extracts error and warning messages from the sting buffer full_file.
+    """
+    err_warn_patterns = [("%s_errors" % key, r"^Error: .*"),
+                         ("%s_errors" % key, r"^ERROR: .*"),
+                         ("%s_errors" % key, r"^.*command not found.*"),
+                         ("%s_warnings" % key, r"^Warning: .*"),
+                         ("%s_warnings" % key, r"^WARNING: .*")]
+    for severity, pattern in err_warn_patterns:
+        results['messages'][severity] += re.findall(pattern,
                                                     full_file,
                                                     flags=re.MULTILINE)
     return results
 
 
-def _match_fp_number(full_file, master_key, patterns, results):
-    """
-    This extracts numbers from the sting buffer full_file.
-    The argument patterns needs to be a list of tuples with
-    (<key>, <pattern_to_match_for>).
-    """
-    for key, pattern in patterns:
-        match = re.findall(pattern, full_file, flags=re.MULTILINE)
-        if len(match) == 1:
-            try:
-                results[master_key][key] = float(match[0])
-            except ValueError as err:
-                results["messages"]["flow_errors"] += ["ValueError: %s" % err]
-        elif len(match) > 0:
-            for item in match:
-                try:
-                    results[master_key][key] += [float(item)]
-                except ValueError as err:
-                    results["messages"]["flow_errors"] += [
-                        "ValueError: %s" % err
-                    ]
-        else:
-            results["messages"]["flow_errors"] += [
-                "Pattern '%s' of key '%s' not found" % (pattern, key)
-            ]
-
-    return results
-
-
-def _extract_messages(full_file, results, key):
-    """
-    This extracts error and warning messages from the sting buffer full_file.
-    """
-    err_warn_patterns = [("%s_errors" % key, r"^Error: .*"),
-                         ("%s_warnings" % key, r"^Warning: .*")]
-    _match_strings(full_file, "messages", err_warn_patterns, results)
-
-    return results
-
-
-def _extract_gate_equiv(full_file, results, key):
+def _extract_gate_equiv(full_file, results, key, args):
     """
     This reads out the unit gate-equivalent.
     """
@@ -92,21 +93,37 @@ def _rel_err(val, ref):
         return abs(val - ref) / ref
 
 
-def _extract_area(full_file, results, key):
+def _extract_area(full_file, results, key, args):
     """
     This extracts detailed area information from the report.
     Area will be reported in gate equivalents.
     """
-    # TODO: covert to gate equivalents
     patterns = [("comb", r"^Combinational area: \s* (\d+\.\d+)"),
                 ("buf", r"^Buf/Inv area: \s* (\d+\.\d+)"),
                 ("reg", r"^Noncombinational area: \s* (\d+\.\d+)"),
                 ("macro", r"^Macro/Black Box area: \s* (\d+\.\d+)"),
                 ("total", r"^Total cell area: \s* (\d+\.\d+)")]
 
-    results = _match_fp_number(full_file, key, patterns, results)
+    nums, errs = _match_fp_number(full_file, patterns)
+
+    # only overwrite default values if a match has been returned
+    for num_key in nums.keys():
+        results[key][num_key] = nums[num_key]
+
+    results['messages']['flow_errors'] += errs
+
     # aggregate one level of sub-modules
     pattern = r"^([\.0-9A-Za-z_\[\]]+){1}(?:(?:/[\.0-9A-Za-z_\[\]]+)*)"
+
+    if args.depth == 2:
+        pattern = r"^args.dut/([\.0-9A-Za-z_\[\]]+){1}" + \
+                  r"(?:(?:/[\.0-9A-Za-z_\[\]]+)*)"
+    elif args.depth > 2:
+        results['messages']['flow_warnings'] += [
+            "Warning: unsupported hierarchy depth="
+            "%d specified, defaulting to depth=1" % args.depth
+            ]
+
     for k in range(5):
         pattern += r"\s+(" + FP_NUMBER + r")"
     matches = re.findall(pattern, full_file, flags=re.MULTILINE)
@@ -141,26 +158,26 @@ def _extract_area(full_file, results, key):
         results["messages"]["flow_errors"] += ["ValueError: %s" % err]
 
     # cross check whether the above accounting is correct
-    if _rel_err(comb_check, results["area"]["comb"]) > CROSSCHECK_REL_TOL:
+    if _rel_err(comb_check, results[key]["comb"]) > CROSSCHECK_REL_TOL:
         results["messages"]["flow_errors"] += [
             "Reporting error: comb_check (%e) != (%e)" %
-            (comb_check, results["area"]["comb"])
+            (comb_check, results[key]["comb"])
         ]
-    if _rel_err(reg_check, results["area"]["reg"]) > CROSSCHECK_REL_TOL:
+    if _rel_err(reg_check, results[key]["reg"]) > CROSSCHECK_REL_TOL:
         results["messages"]["flow_errors"] += [
             "Reporting error: reg_check (%e) != (%e)" %
-            (reg_check, results["area"]["reg"])
+            (reg_check, results[key]["reg"])
         ]
-    if _rel_err(macro_check, results["area"]["macro"]) > CROSSCHECK_REL_TOL:
+    if _rel_err(macro_check, results[key]["macro"]) > CROSSCHECK_REL_TOL:
         results["messages"]["flow_errors"] += [
             "Reporting error: macro_check (%e) != (%e)" %
-            (macro_check, results["area"]["macro"])
+            (macro_check, results[key]["macro"])
         ]
 
     return results
 
 
-def _extract_clocks(full_file, results, key):
+def _extract_clocks(full_file, results, key, args):
     """
     Parse out the clocks and their period
     """
@@ -184,7 +201,7 @@ def _extract_clocks(full_file, results, key):
     return results
 
 
-def _extract_timing(full_file, results, key):
+def _extract_timing(full_file, results, key, args):
     """
     This extracts the TNS and WNS for all defined clocks.
     """
@@ -199,12 +216,13 @@ def _extract_timing(full_file, results, key):
         # get TNS and WNS in that group
         for k, g in enumerate(groups):
             if g.strip() not in results[key]:
-                results[key].update(
-                    {g.strip(): {
-                         "tns": 0.0,
-                         "wns": 0.0,
-                         "period": float("nan")
-                     }})
+                results[key].update({
+                    g.strip(): {
+                        "tns": 0.0,
+                        "wns": 0.0,
+                        "period": float("nan")
+                    }
+                })
             value = float(slack[k]) if float(slack[k]) < 0.0 else 0.0
             results[key][g]["wns"] = min(results[key][g]["wns"], value)
             results[key][g]["tns"] += value
@@ -233,7 +251,7 @@ def _match_units(full_file, patterns, key, results):
     return results
 
 
-def _extract_units(full_file, results, key):
+def _extract_units(full_file, results, key, args):
     """
     Get the SI units configuration of this run
     """
@@ -277,7 +295,7 @@ def _extract_units(full_file, results, key):
     return results
 
 
-def _extract_power(full_file, results, key):
+def _extract_power(full_file, results, key, args):
     """
     This extracts power estimates for the top module from the report.
     """
@@ -290,25 +308,31 @@ def _extract_power(full_file, results, key):
                 ("leak", r"^" + results["top"] + r"\s*" + FP_NUMBER + r" \s*" +
                  FP_NUMBER + r"\s*(" + FP_NUMBER + r")")]
 
-    results = _match_fp_number(full_file, key, patterns, results)
+    nums, errs = _match_fp_number(full_file, patterns)
+
+    # only overwrite default values if a match has been returned
+    for num_key in nums.keys():
+        results[key][num_key] = nums[num_key]
+
+    results['messages']['flow_errors'] += errs
 
     return results
 
 
-def _parse_file(path, name, results, handler, key):
+def _parse_file(path, name, results, handler, key, args):
     """
     Attempts to open and aprse a given report file with the handler provided.
     """
     try:
         with Path(path).joinpath(name).open() as f:
             full_file = f.read()
-            results = handler(full_file, results, key)
+            results = handler(full_file, results, key, args)
     except IOError as err:
         results["messages"]["flow_errors"] += ["IOError: %s" % err]
     return results
 
 
-def get_results(logpath, reppath, dut):
+def get_results(args):
     """
     Parse report and corresponding logfiles and extract error, warning
     and info messages for each IP present in the result folder
@@ -357,34 +381,35 @@ def get_results(logpath, reppath, dut):
         }
     }
 
-    results["top"] = dut
+    results["top"] = args.dut
 
     # flow messages
-    results = _parse_file(logpath, 'synthesis.log', results, _extract_messages,
-                          "flow")
+    results = _parse_file(args.logpath, 'synthesis.log', results, _extract_messages,
+                          "flow", args)
 
     # messages
     for rep_type in ["analyze", "elab", "compile"]:
-        results = _parse_file(reppath, '%s.rpt' % rep_type, results,
-                              _extract_messages, rep_type)
+        results = _parse_file(args.reppath, '%s.rpt' % rep_type, results,
+                              _extract_messages, rep_type, args)
 
     # get gate equivalents
-    results = _parse_file(reppath, 'gate_equiv.rpt', results,
-                          _extract_gate_equiv, "area")
+    results = _parse_file(args.reppath, 'gate_equiv.rpt', results,
+                          _extract_gate_equiv, "area", args)
     # area
-    results = _parse_file(reppath, 'area.rpt', results, _extract_area, "area")
+    results = _parse_file(args.reppath, 'area.rpt', results, _extract_area,
+                          "area", args)
     # clocks. this complements the timing report later below
-    results = _parse_file(reppath, 'clocks.rpt', results, _extract_clocks,
-                          "timing")
+    results = _parse_file(args.reppath, 'clocks.rpt', results, _extract_clocks,
+                          "timing", args)
     # timing
-    results = _parse_file(reppath, 'timing.rpt', results, _extract_timing,
-                          "timing")
+    results = _parse_file(args.reppath, 'timing.rpt', results, _extract_timing,
+                          "timing", args)
     # power
-    results = _parse_file(reppath, 'power.rpt', results, _extract_power,
-                          "power")
+    results = _parse_file(args.reppath, 'power.rpt', results, _extract_power,
+                          "power", args)
     # units
-    results = _parse_file(reppath, 'power.rpt', results, _extract_units,
-                          "units")
+    results = _parse_file(args.reppath, 'power.rpt', results, _extract_units,
+                          "units", args)
 
     return results
 
@@ -497,8 +522,13 @@ def main():
                         help="""Output directory for the 'results.hjson' file.
                         Defaults to './'""")
 
+    parser.add_argument('--depth',
+                        type=int,
+                        default=1,
+                        help="""Area Report with hierarchical depth""")
+
     args = parser.parse_args()
-    results = get_results(args.logpath, args.reppath, args.dut)
+    results = get_results(args)
 
     with Path(args.outdir).joinpath("results.hjson").open("w") as results_file:
         hjson.dump(results,

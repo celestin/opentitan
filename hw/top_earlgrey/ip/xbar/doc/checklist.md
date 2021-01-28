@@ -9,32 +9,32 @@ All checklist items refer to the content in the [Checklist]({{< relref "/doc/pro
 
 ### D1
 
-Type          | Item                  | Resolution  | Note/Collaterals
---------------|-----------------------|-------------|------------------
-Documentation | [SPEC_COMPLETE][]     | Done        | [TL-UL Spec][] [crossbar_tool][]
-Documentation | [CSR_DEFINED][]       | N/A         |
-RTL           | [CLKRST_CONNECTED][]  | Done        |
-RTL           | [IP_TOP][]            | Done        |
-RTL           | [IP_INSTANTIABLE][]      | Done        |
-RTL           | [MEM_INSTANCED_80][]  | N/A         |
-RTL           | [FUNC_IMPLEMENTED][]  | Done        |
-RTL           | [ASSERT_KNOWN_ADDED][]| Done        |
-Code Quality  | [LINT_SETUP][]        | Done        |
-Review        | Reviewer(s)           | Done        | @weicaiyang @aytong @martin-lueker
-Review        | Signoff date          | Done        | 2019-11-04
+Type          | Item                           | Resolution  | Note/Collaterals
+--------------|--------------------------------|-------------|------------------
+Documentation | [SPEC_COMPLETE][]              | Done        | [TL-UL Spec][] [crossbar_tool][]
+Documentation | [CSR_DEFINED][]                | N/A         |
+RTL           | [CLKRST_CONNECTED][]           | Done        |
+RTL           | [IP_TOP][]                     | Done        |
+RTL           | [IP_INSTANTIABLE][]            | Done        |
+RTL           | [PHYSICAL_MACROS_DEFINED_80][] | N/A         |
+RTL           | [FUNC_IMPLEMENTED][]           | Done        |
+RTL           | [ASSERT_KNOWN_ADDED][]         | Done        |
+Code Quality  | [LINT_SETUP][]                 | Done        |
+Review        | Reviewer(s)                    | Done        | @weicaiyang @aytong @martin-lueker
+Review        | Signoff date                   | Done        | 2019-11-04
 
 [TL-UL Spec]:         {{<relref "/hw/ip/tlul/doc">}}
 [crossbar_tool]:      {{<relref "/doc/rm/crossbar_tool">}}
 
-[SPEC_COMPLETE]:      {{<relref "/doc/project/checklist.md#spec-complete" >}}
-[CSR_DEFINED]:        {{<relref "/doc/project/checklist.md#csr-defined" >}}
-[CLKRST_CONNECTED]:   {{<relref "/doc/project/checklist.md#clkrst-connected" >}}
-[IP_TOP]:             {{<relref "/doc/project/checklist.md#ip-top" >}}
-[IP_INSTANTIABLE]:    {{<relref "/doc/project/checklist.md#ip-instantiable" >}}
-[MEM_INSTANCED_80]:   {{<relref "/doc/project/checklist.md#mem-instanced-80" >}}
-[FUNC_IMPLEMENTED]:   {{<relref "/doc/project/checklist.md#func-implemented" >}}
-[ASSERT_KNOWN_ADDED]: {{<relref "/doc/project/checklist.md#assert-known-added" >}}
-[LINT_SETUP]:         {{<relref "/doc/project/checklist.md#lint-setup" >}}
+[SPEC_COMPLETE]:              {{<relref "/doc/project/checklist.md#spec-complete" >}}
+[CSR_DEFINED]:                {{<relref "/doc/project/checklist.md#csr-defined" >}}
+[CLKRST_CONNECTED]:           {{<relref "/doc/project/checklist.md#clkrst-connected" >}}
+[IP_TOP]:                     {{<relref "/doc/project/checklist.md#ip-top" >}}
+[IP_INSTANTIABLE]:            {{<relref "/doc/project/checklist.md#ip-instantiable" >}}
+[PHYSICAL_MACROS_DEFINED_80]: {{<relref "/doc/project/checklist.md#physical_macros_defined-80" >}}
+[FUNC_IMPLEMENTED]:           {{<relref "/doc/project/checklist.md#func-implemented" >}}
+[ASSERT_KNOWN_ADDED]:         {{<relref "/doc/project/checklist.md#assert-known-added" >}}
+[LINT_SETUP]:                 {{<relref "/doc/project/checklist.md#lint-setup" >}}
 
 ### D2
 
@@ -46,7 +46,7 @@ Documentation | [DOC_INTERFACE][]       | N/A         |
 Documentation | [MISSING_FUNC][]        | N/A         |
 Documentation | [FEATURE_FROZEN][]      | Done        |
 RTL           | [FEATURE_COMPLETE][]    | Done        |
-RTL           | [AREA_SANITY_CHECK][]   | Done        |
+RTL           | [AREA_CHECK][]          | Done        |
 RTL           | [PORT_FROZEN][]         | Done        | Targetting for current top_earlgrey( Port can be changed later based on top_earlgrey config)
 RTL           | [ARCHITECTURE_FROZEN][] | Done        |
 RTL           | [REVIEW_TODO][]         | Done        | PR [#837][] is pending
@@ -55,6 +55,9 @@ Code Quality  | [LINT_PASS][]           | Done        |
 Code Quality  | [CDC_SETUP][]           | N/A         | top_earlgrey uses single clock at this moment. (new PR by Tim is pending )
 Code Quality  | [FPGA_TIMING][]         | Done        | Pipeline inserted in front of Core IBEX. meet timing @ 50MHz on NexysVideo
 Code Quality  | [CDC_SYNCMACRO][]       | N/A         |
+Security      | [SEC_CM_IMPLEMENTED][]  | N/A         |
+Security      | [SEC_NON_RESET_FLOPS][] | N/A         |
+Security      | [SEC_SHADOW_REGS][]     | N/A         |
 Review        | Reviewer(s)             | Done        | @sjgitty @weicaiyang
 Review        | Signoff date            | Done        | 2019-11-04
 
@@ -66,7 +69,7 @@ Review        | Signoff date            | Done        | 2019-11-04
 [MISSING_FUNC]:        {{<relref "/doc/project/checklist.md#missing-func" >}}
 [FEATURE_FROZEN]:      {{<relref "/doc/project/checklist.md#feature-frozen" >}}
 [FEATURE_COMPLETE]:    {{<relref "/doc/project/checklist.md#feature-complete" >}}
-[AREA_SANITY_CHECK]:   {{<relref "/doc/project/checklist.md#area-sanity-check" >}}
+[AREA_CHECK]:          {{<relref "/doc/project/checklist.md#area-check" >}}
 [PORT_FROZEN]:         {{<relref "/doc/project/checklist.md#port-frozen" >}}
 [ARCHITECTURE_FROZEN]: {{<relref "/doc/project/checklist.md#architecture-frozen" >}}
 [REVIEW_TODO]:         {{<relref "/doc/project/checklist.md#review-todo" >}}
@@ -75,6 +78,9 @@ Review        | Signoff date            | Done        | 2019-11-04
 [CDC_SETUP]:           {{<relref "/doc/project/checklist.md#cdc-setup" >}}
 [CDC_SYNCMACRO]:       {{<relref "/doc/project/checklist.md#cdc-syncmacro" >}}
 [FPGA_TIMING]:         {{<relref "/doc/project/checklist.md#fpga-timing" >}}
+[SEC_CM_IMPLEMENTED]:  {{<relref "/doc/project/checklist.md#sec-cm-implemented" >}}
+[SEC_NON_RESET_FLOPS]: {{<relref "/doc/project/checklist.md#sec-non-reset-flops" >}}
+[SEC_SHADOW_REGS]:     {{<relref "/doc/project/checklist.md#sec-shadow-regs" >}}
 
 ### D3
 
@@ -111,47 +117,48 @@ Review        | Signoff date            | Done        | 2019-11-07
 
  Type         | Item                                  | Resolution  | Note/Collaterals
 --------------|---------------------------------------|-------------|------------------
-Documentation | [DV_PLAN_DRAFT_COMPLETED][]           | Done        | [DV_PLAN][]
-Documentation | [TESTPLAN_COMPLETED][]                | Done        |
+Documentation | [DV_DOC_DRAFT_COMPLETED][]            | Done        | [DV_PLAN][]
+Documentation | [DV_PLAN_COMPLETED][]                 | Done        |
 Testbench     | [TB_TOP_CREATED][]                    | Done        |
 Testbench     | [PRELIMINARY_ASSERTION_CHECKS_ADDED][]| Done        |
 Testbench     | [TB_ENV_CREATED][]                    | Done        |
 Testbench     | [RAL_MODEL_GEN_AUTOMATED][]           | N/A         |
 Testbench     | [TB_GEN_AUTOMATED][]                  | Waived      | Manually generated. Planned to automate later
-Tests         | [SANITY_TEST_PASSING][]               | Done        |
+Tests         | [SMOKE_TEST_PASSING][]                | Done        |
 Tests         | [CSR_MEM_TEST_SUITE_PASSING][]        | N/A         |
 Tool Setup    | [ALT_TOOL_SETUP][]                    | Done        |
-Regression    | [SANITY_REGRESSION_SETUP][]           | Done        | Exception (Runs at local)
+Regression    | [SMOKE_REGRESSION_SETUP][]            | Done        | Exception (Runs at local)
 Regression    | [NIGHTLY_REGRESSION_SETUP][]          | Done        | Exception (Runs at local)
 Coverage      | [COVERAGE_MODEL_ADDED][]              | Done        |
+Code Quality  | [TB_LINT_SETUP][]                     | Done        |
 Integration   | [PRE_VERIFIED_SUB_MODULES_V1][]       | Waived      | prim_arbiter to be verified later
 Review        | [DESIGN_SPEC_REVIEWED][]              | Done        |
-Review        | [DV_PLAN_TESTPLAN_REVIEWED][]         | Done        |
+Review        | [DV_PLAN_REVIEWED][]                  | Done        |
 Review        | [STD_TEST_CATEGORIES_PLANNED][]       | Done        | Exception (Security, Power, Debug, Performance)
 Review        | [V2_CHECKLIST_SCOPED][]               | Done        |
 Review        | Reviewer(s)                           | Done        | @eunchan @sjgitty @sriyerg
 Review        | Signoff date                          | Done        | 2019-11-04
 
 
-[DV_PLAN]:                            {{<relref "/hw/ip/tlul/doc/dv_plan">}}
+[DV_PLAN]:                            {{<relref "/hw/ip/tlul/doc/dv">}}
 
-[DV_PLAN_DRAFT_COMPLETED]:            {{<relref "/doc/project/checklist.md#dv-plan-draft-completed" >}}
-[TESTPLAN_COMPLETED]:                 {{<relref "/doc/project/checklist.md#testplan-completed" >}}
+[DV_DOC_DRAFT_COMPLETED]:             {{<relref "/doc/project/checklist.md#dv-plan-draft-completed" >}}
+[DV_PLAN_COMPLETED]:                  {{<relref "/doc/project/checklist.md#dv_plan-completed" >}}
 [TB_TOP_CREATED]:                     {{<relref "/doc/project/checklist.md#tb-top-created" >}}
 [PRELIMINARY_ASSERTION_CHECKS_ADDED]: {{<relref "/doc/project/checklist.md#preliminary-assertion-checks-added" >}}
 [TB_ENV_CREATED]:                     {{<relref "/doc/project/checklist.md#tb-env-created" >}}
 [RAL_MODEL_GEN_AUTOMATED]:            {{<relref "/doc/project/checklist.md#ral-model-gen-automated" >}}
-[TB_GEN_AUTOMATED]:                   {{<relref "/doc/project/checklist.md#tb-gen-automated"
->}}
-[SANITY_TEST_PASSING]:                {{<relref "/doc/project/checklist.md#sanity-test-passing" >}}
+[TB_GEN_AUTOMATED]:                   {{<relref "/doc/project/checklist.md#tb-gen-automated" >}}
+[SMOKE_TEST_PASSING]:                 {{<relref "/doc/project/checklist.md#smoke-test-passing" >}}
 [CSR_MEM_TEST_SUITE_PASSING]:         {{<relref "/doc/project/checklist.md#csr-mem-test-suite-passing" >}}
 [ALT_TOOL_SETUP]:                     {{<relref "/doc/project/checklist.md#alt-tool-setup" >}}
-[SANITY_REGRESSION_SETUP]:            {{<relref "/doc/project/checklist.md#sanity-regression-setup" >}}
+[SMOKE_REGRESSION_SETUP]:             {{<relref "/doc/project/checklist.md#smoke-regression-setup" >}}
 [NIGHTLY_REGRESSION_SETUP]:           {{<relref "/doc/project/checklist.md#nightly-regression-setup" >}}
 [COVERAGE_MODEL_ADDED]:               {{<relref "/doc/project/checklist.md#coverage-model-added" >}}
+[TB_LINT_setup]:                      {{<relref "/doc/project/checklist.md#tb_lint_setup" >}}
 [PRE_VERIFIED_SUB_MODULES_V1]:        {{<relref "/doc/project/checklist.md#pre-verified-sub-modules-v1" >}}
 [DESIGN_SPEC_REVIEWED]:               {{<relref "/doc/project/checklist.md#design-spec-reviewed" >}}
-[DV_PLAN_TESTPLAN_REVIEWED]:          {{<relref "/doc/project/checklist.md#dv-plan-testplan-reviewed" >}}
+[DV_PLAN_REVIEWED]:                   {{<relref "/doc/project/checklist.md#dv-plan-dv_plan-reviewed" >}}
 [STD_TEST_CATEGORIES_PLANNED]:        {{<relref "/doc/project/checklist.md#std-test-categories-planned" >}}
 [V2_CHECKLIST_SCOPED]:                {{<relref "/doc/project/checklist.md#v2-checklist-scoped" >}}
 
@@ -169,6 +176,7 @@ Tests         | [FW_SIMULATED][]                        | N/A         |
 Regression    | [NIGHTLY_REGRESSION_V2][]               | Done        |
 Coverage      | [CODE_COVERAGE_V2][]                    | Done        |
 Coverage      | [FUNCTIONAL_COVERAGE_V2][]              | Done        |
+Code Quality  | [TB_LINT_PASS][]                        | Done        |
 Issues        | [NO_HIGH_PRIORITY_ISSUES_PENDING][]     | Done        |
 Issues        | [ALL_LOW_PRIORITY_ISSUES_ROOT_CAUSED][] | Done        |
 Integration   | [PRE_VERIFIED_SUB_MODULES_V2][]         | Waived      | prim_arbiter to be verified later
@@ -187,6 +195,7 @@ Review        | Signoff date                            | Done        | 2019-11-
 [NIGHTLY_REGRESSION_V2]:              {{<relref "/doc/project/checklist.md#nightly-regression-v2" >}}
 [CODE_COVERAGE_V2]:                   {{<relref "/doc/project/checklist.md#code-coverage-v2" >}}
 [FUNCTIONAL_COVERAGE_V2]:             {{<relref "/doc/project/checklist.md#functional-coverage-v2" >}}
+[TB_LINT_PASS]:                       {{<relref "/doc/project/checklist.md#tb_lint_pass" >}}
 [NO_HIGH_PRIORITY_ISSUES_PENDING]:    {{<relref "/doc/project/checklist.md#no-high-priority-issues-pending" >}}
 [ALL_LOW_PRIORITY_ISSUES_ROOT_CAUSED]:{{<relref "/doc/project/checklist.md#all-low-priority-issues-root-caused" >}}
 [PRE_VERIFIED_SUB_MODULES_V2]:        {{<relref "/doc/project/checklist.md#pre-verified-sub-modules-v2" >}}
@@ -204,6 +213,7 @@ Coverage      | [CODE_COVERAGE_AT_100][]          | Done        | [xbar_cov_excl
 Coverage      | [FUNCTIONAL_COVERAGE_AT_100][]    | Done        |
 Issues        | [NO_ISSUES_PENDING][]             | Done        |
 Code Quality  | [NO_TOOL_WARNINGS_THROWN][]       | Done        | Waived warning due to using 'force' to connect the signal
+Code Quality  | [TB_LINT_COMPLETE][]              | Not Started |
 Integration   | [PRE_VERIFIED_SUB_MODULES_V3][]   | Waived      | prim_arbiter to be verified later
 Review        | Reviewer(s)                       | Done        | @eunchan @sriyerg
 Review        | Signoff date                      | Done        | 2019-11-07
@@ -216,5 +226,6 @@ Review        | Signoff date                      | Done        | 2019-11-07
 [FUNCTIONAL_COVERAGE_AT_100]:   {{<relref "/doc/project/checklist.md#functional-coverage-at-100" >}}
 [NO_ISSUES_PENDING]:            {{<relref "/doc/project/checklist.md#no-issues-pending" >}}
 [NO_TOOL_WARNINGS_THROWN]:      {{<relref "/doc/project/checklist.md#no-tool-warnings-thrown" >}}
+[TB_LINT_COMPLETE]:             {{<relref "/doc/project/checklist.md#tb_lint_complete" >}}
 [PRE_VERIFIED_SUB_MODULES_V3]:  {{<relref "/doc/project/checklist.md#pre-verified-sub-modules-v3" >}}
 [xbar_cov_excl.el]: https://github.com/weicaiyang/opentitan/blob/6cd55ad23aac96374bfa0bec315b904c6ffbdb8f/hw/ip/tlul/dv/cov/xbar_cov_excl.el

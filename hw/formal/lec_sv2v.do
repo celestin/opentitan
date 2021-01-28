@@ -4,47 +4,39 @@
 
 // dofile for LEC script lec_sv2v
 
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
 // read in golden (SystemVerilog) and revised (Verilog)
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
+set parallel option -threads 8
 
-// black box all instantiated modules (so only top-module is used)
-set undefined cell black_box
+// map all multi-dimensional ports (including structs) onto 1-dim. ports
+set naming rule -mdportflatten
 
-// read golden design
-read design -golden -sv09 \
-  $LEC_DIR/prim_assert.sv \
-  $LEC_DIR/top_pkg.sv \
-  $LEC_DIR/tlul_pkg.sv \
-  $LEC_DIR/*_pkg.sv \
-  $LEC_DIR/$LEC_TOP.sv
+read design -golden -sv12 -f flist_gold -rootonly -root $LEC_TOP
+read design -revised -ve  -f flist_rev  -rootonly -root $LEC_TOP
 
-// read revised design
-read design -revised -verilog \
-  $LEC_DIR/$LEC_TOP.v
-
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
 // pre-LEC reports
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
+report rule check -verbose
 report design data
 report black box
 report module
 
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
 // compare
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
+set mapping method -name_effort low
 set system mode lec
-map key points
-set parallel option -threads 4
-analyze datapath -merge -verbose -effort ultra
+report unmapped points
+
 add compare point -all
-set compare effort ultra
-compare -threads 4
+compare -threads 8 -noneq_stop 1
 analyze abort -compare
 
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
 // reports
-//-----------------------------------------------------------------
+//-------------------------------------------------------------------------
 report compare data -class nonequivalent -class abort -class notcompared
 report verification -verbose
 report statistics

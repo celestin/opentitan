@@ -1,31 +1,92 @@
-# Install Build Requirements
-
+---
+title: Install Build Requirements
+---
 
 ## System requirements
 
-_**Note for all Windows users:** many tools we're using can in theory work on Windows.
-However, we didn't test on Windows and things will be broken there.
-Unless you are experienced in debugging various tool problems on Windows using Linux will improve your developer experience significantly._
-
 This guide makes assumes the following system setup.
 
-* A reasonably powerful PC running Linux.
+* A reasonably powerful PC.
   Using a virtual machine can work, but will slow down builds considerably.
   8 GB of RAM or more are highly recommended.
-* Physical access to that machine, root permissions and a graphical environment.
-* Python 3.5.2 or newer. Python 3.6+ is recommended.
-* A C++14 capable compiler. GCC 5 or Clang 3.5 should meet this requirement.
-* 60 GB or more of disk space.
-  EDA tools like Xilinx Vivado can easily take up 40 GB each.
-* We develop and test on the following Linux distributions:
-  * Ubuntu 16.04 LTS
-  * Debian testing
-  * openSUSE Tumbleweed
-  * TODO: Check RHEL/CentOS and SLES (used in many commercial environments)
+* Physical access to that machine, root permissions and a graphical environment are assumed in this guide.
+  However, with an appropriate setup, none of these things are strictly needed.
+* 60 GB or more of disk space, depending on the EDA tools used.
+  (EDA tools like Xilinx Vivado can easily take up 40 GB each.)
+* Linux
+  * Ubuntu 18.04 LTS is the recommended reference platform.
+    Our continuous integration setup runs on Ubuntu 18.04 LTS, which gives us the most confidence that this distribution works out of the box.
+  * We do our best to support other Linux distributions.
+    However, we cannot guarantee they can be used "out of the box" and might require updates of packages.
+    Please file a [GitHub issue](https://github.com/lowRISC/opentitan/issues) if you need help or would like to propose a change to increase compatibility with other distributions.
+    * RedHat Enterprise Linux (RHEL)/CentOS.
 
-TODO: Be more specific about the system requirements, especially the Linux distribution.
+      On RHEL/CentOS not all required packages are part of the base distribution; however, they can be installed easily.
+      All required packages except for a C/C++ compiler can be obtained by enabling the [EPEL repository](https://fedoraproject.org/wiki/EPEL).
+      A sufficiently recent version of GCC or LLVM (clang) can be obtained through [Red Hat Software Collections](https://www.softwarecollections.org/en/).
+      SCLs can also be used to obtain newer version of Python if needed.
+
+    * Many of our contributors use rolling release distributions, which generally include the latest stable releases of all software packages, such as Debian unstable, openSUSE Tumbleweed, or Arch Linux.
+
+The following software packages are required to build and use the software, hardware, and tools in the OpenTitan repository.
+Not every interaction with the repository requires all tools -- however, we recommend users installing all dependencies listed below for a seamless development experience.
+
+Note: Version numbers given below indicate a minimum version, newer versions are generally expected to work, unless explicitly stated.
+For packages listed below without a version number we have not determined a minimum version.
+
+* git
+* Python 3.6 with pip.
+  Additional Python dependencies are installed through pip.
+* A C++14 capable compiler.
+  GCC 5 or Clang 3.5 should meet this requirement.
+* clang-format.
+  The use of clang-format 6.0 is recommended to match the formatting enforced when submitting a pull request.
+* [ninja](https://ninja-build.org/)  {{< tool_version "ninja-build" >}}
+* Bash
+* curl
+* xz tools
+* LSB core packages (only the `lsb_release` tool must be available)
+* srecord
+* GNU make
+* pkg-config or pkgconf
+* libelf with development headers
+* libftdi with development headers
+* OpenSSL 1.0 or 1.1 with development headers
+* libusb 1.0 (called libusbx in older distributions)
+* OpenOCD
+* [Verible](https://github.com/google/verible) {{< tool_version "verible" >}}
+
+To synthesize and simulate the hardware components of OpenTitan multiple EDA tools are supported.
+Depending on how you interact with the OpenTitan hardware code, one of more of the following tools need to be available.
+
+* [Verilator](https://verilator.org) {{< tool_version "verilator" >}}
+* Xilinx Vivado 2018.3
+* Synopsys VCS
+* Cadence Xcelium
+* Cadence JasperGold
+* RealIntent Ascent Lint
+* Synopsys Design Compiler (DC)
+
+To build our documentation the following additional sofware packages are required.
+
+* [Hugo extended](https://gohugo.io/) {{< tool_version "hugo_extended" >}}.
+  A supported binary build of Hugo is installed when building the documentation.
+  However, the binaries do not run on very old distributions, such as RHEL 6.
+  In this case, Hugo must be installed separately (e.g. by building it from source).
+* [doxygen](https://www.doxygen.nl/) 1.8
+* xsltproc
 
 ## System preparation
+
+<div class="bd-callout bd-callout-warning">
+  <h5>Note</h5>
+
+  This documentation and the following steps in general assume our reference distribution, Ubuntu 18.04.
+  Users inexperienced with Linux and OpenTitan are strongly encouraged to use this distribution for a seamless development experience.
+
+  Users of other Linux distributions should use these steps as guidance, but will need to adjust them as necessary.
+  Please file [GitHub issues](https://github.com/opentitan/issues/new) if you have questions.
+</div>
 
 By convention tools which are not provided through a package manager will be installed into `/tools`.
 This directory can be replaced by any sufficiently large directory without spaces in the directory name.
@@ -46,19 +107,27 @@ $ cd <working-area>
 $ git clone https://github.com/lowRISC/opentitan.git
 ```
 
-The repository will be checked out into `<working-area>/opentitan` (this is the
-`$REPO_TOP` path).
+The repository will be checked out into `<working-area>/opentitan` (this is the `$REPO_TOP` path).
 
 ### Install required software
 
-A number of software packages from the distribution's package manager is required.
-All installation instructions below are for Ubuntu 16.04.
-Adjust as necessary for other Linux distributions.
+A number of software packages from the distribution's package manager are required.
+On Ubuntu 18.04, the required packages can be installed with the following command.
 
-{{< apt_cmd >}}
+{{< pkgmgr_cmd "apt" >}}
+
+Our recommended reference platform is Ubuntu 18.04, but the command can be adjusted as necessary for other Linux distributions.
+
+For example, for Red Hat Enterprise Linux (RHEL) 7 and derivatives (such as CentOS 7) the following packages are required.
+Note that we don't have the possibilities to actively verify that our instructions continue work on RHEL/CentOS and hence also can't test anything on these distributions.
+The following instructions are effectively community contributed and we encourage users to raise pull requests if they find the package requirements to be outdated.
+First of all, the [EPEL repository](https://fedoraproject.org/wiki/EPEL) has to be enabled.
+A sufficiently recent version of GCC or LLVM (clang) can be obtained through [Red Hat Software Collections](https://www.softwarecollections.org/en/).
+Then run the following command to install the required package dependencies on RHEL/CentOS 7.
+
+{{< pkgmgr_cmd "yum" >}}
 
 Some tools in this repository are written in Python 3 and require Python dependencies to be installed through `pip`.
-(Note that the `diff_generated_util_output.py` tool works better with Python 3.6 or later where the order is preserved in `dict` types, earlier versions of Python will show spurious differences caused by things being reordered.)
 
 ```console
 $ cd $REPO_TOP
@@ -74,20 +143,25 @@ If the `fusesoc` binary is not found, add `~/.local/bin` to your `PATH`, e.g. by
 ### Device compiler toolchain (RV32IMC)
 
 To build device software you need a baremetal RV32IMC compiler toolchain.
-You can either build your own or use a prebuilt one.
-We recommend installing the toolchain to `/tools/riscv`.
+We recommend using a prebuilt toolchain provided by lowRISC.
+Alternatively, you can build your own.
+Whichever option you choose, we recommend installing the toolchain to `/tools/riscv`.
 
-#### Option 1 (recommended): Use the lowRISC-provided prebuilt GCC toolchain
+#### Option 1 (recommended): Use the lowRISC-provided prebuilt toolchain
 
-lowRISC provides a prebuilt GCC toolchain for the OpenTitan project.
-Download the file starting with `lowrisc-toolchain-gcc-rv32imc-` from [GitHub releases](https://github.com/lowRISC/lowrisc-toolchains/releases/latest) and unpack it to `/tools/riscv`.
-
-Or alternatively, use a in-tree helper script.
+lowRISC provides a prebuilt toolchain for the OpenTitan project.
+This toolchain contains both GCC and Clang, targeting RISC-V.
+By default the device software is built with Clang.
+We recommend using the `util/get-toolchain.py` tool to download and install the latest version of this toolchain.
 
 ```cmd
 $ cd $REPO_TOP
 $ ./util/get-toolchain.py
 ```
+
+This tool will automatically adjust the toolchain configuration if you override the installation directory (by using the `--install-dir` option).
+It also provides the ability to perform a staged installation (by supplying a `--dest-dir` option), if the toolchain needs to be unpacked first at a temporary staging directory, before it can be moved to the final installation directory.
+Alternatively, manually download the file starting with `lowrisc-toolchain-rv32imc-` from [GitHub releases](https://github.com/lowRISC/lowrisc-toolchains/releases/latest) and unpack it to the desired installation directory.
 
 #### Option 2: Compile your own GCC toolchain
 
@@ -101,7 +175,38 @@ $ ./util/get-toolchain.py
     $ make
     ```
 
-The `make` command installs the toolchain to `/tools/riscv`, no additional `make install` step is needed.
+    The `make` command installs the toolchain to `/tools/riscv`, no additional `make install` step is needed.
+
+3. Write a [meson toolchain configuration file](https://mesonbuild.com/Cross-compilation.html#defining-the-environment) for your toolchain.
+   It should look like the following (though your paths may be different):
+    ```ini
+    [binaries]
+    c = '/tools/riscv/bin/riscv32-unknown-elf-gcc'
+    cpp = '/tools/riscv/bin/riscv32-unknown-elf-g++'
+    ar = '/tools/riscv/bin/riscv32-unknown-elf-ar'
+    ld = '/tools/riscv/bin/riscv32-unknown-elf-ld'
+    objdump = '/tools/riscv/bin/riscv32-unknown-elf-objdump'
+    objcopy = '/tools/riscv/bin/riscv32-unknown-elf-objcopy'
+    strip = '/tools/riscv/bin/riscv32-unknown-elf-strip'
+    as = '/tools/riscv/bin/riscv32-unknown-elf-as'
+
+    [properties]
+    needs_exe_wrapper = true
+    has_function_printf = false
+    c_args = ['-march=rv32imc', '-mabi=ilp32', '-mcmodel=medany']
+    c_link_args = ['-march=rv32imc', '-mabi=ilp32', '-mcmodel=medany']
+    cpp_args = ['-march=rv32imc', '-mabi=ilp32', '-mcmodel=medany']
+    cpp_link_args = ['-march=rv32imc', '-mabi=ilp32', '-mcmodel=medany']
+
+    [host_machine]
+    system = 'bare metal'
+    cpu_family = 'riscv32'
+    cpu = 'ibex'
+    endian = 'little'
+    ```
+
+    You will need to pass the path to this file to `./meson_init.sh` using the `-t FILE` option.
+
 
 ### OpenOCD
 
@@ -136,7 +241,7 @@ Then you can fetch, build and install Verilator itself (this should be done outs
 ```console
 $ export VERILATOR_VERSION={{< tool_version "verilator" >}}
 
-$ git clone http://git.veripool.org/git/verilator
+$ git clone https://github.com/verilator/verilator.git
 $ cd verilator
 $ git checkout v$VERILATOR_VERSION
 
@@ -147,6 +252,34 @@ $ make install
 ```
 
 After installation you need to add `/tools/verilator/$VERILATOR_VERSION/bin` to your `PATH` environment variable.
+
+## Verible
+
+Verible is an open source  SystemVerilog style linter and formatting tool.
+The style linter is relatively mature and we use it as part of our [RTL design flow]({{< relref "doc/ug/design" >}}).
+The formatter is still under active development, and hence its usage is more experimental in OpenTitan.
+
+You can download and build Verible from scratch as explained on the [Verible GitHub page](https://github.com/google/verible/).
+But since this requires the Bazel build system the recommendation is to download and install a pre-built binary as described below.
+
+### Install Verible
+
+Go to [this page](https://github.com/google/verible/releases) and download the correct binary archive for your machine.
+The example below is for Ubuntu 18.04:
+
+```console
+$ export VERIBLE_VERSION={{< tool_version "verible" >}}
+
+$ wget https://github.com/google/verible/releases/download/v${VERIBLE_VERSION}/verible-${VERIBLE_VERSION}-Ubuntu-18.04-bionic-x86_64.tar.gz
+$ tar -xf verible-${VERIBLE_VERSION}-Ubuntu-18.04-bionic-x86_64.tar.gz
+
+$ sudo mkdir -p /tools/verible/${VERIBLE_VERSION}/
+$ sudo mv verible-${VERIBLE_VERSION}/* /tools/verible/${VERIBLE_VERSION}/
+```
+
+After installation you need to add `/tools/verible/$VERIBLE_VERSION/bin` to your `PATH` environment variable.
+
+Note that we currently use version {{< tool_version "verible" >}}, but it is expected that this version is going to be updated frequently, since the tool is under active develpment.
 
 ## Xilinx Vivado
 
@@ -161,8 +294,7 @@ Most lowRISC designs support at least one FPGA board which works with a free Web
 
 ### Install Xilinx Vivado
 
-_**Vivado Version:** Vivado 2019.1 and all its updates are not compatible with this project.
-A discussion on this problem can be found in the [Github issue](https://github.com/lowRISC/opentitan/issues/89)._
+_**Vivado Version:** Vivado 2019.1 and all its minor updates are not compatible with this project._
 
 Vivado can be installed in two ways: either through an "All OS installer Single-File Download", or via the "Linux Self Extracting Web Installer".
 Neither option is great:
@@ -172,9 +304,9 @@ But unfortunately it doesn't support the batch mode for unattended installations
 
 To get started faster we use the web installer in the following.
 
-1. Go to the [Xilinx download page](https://www.xilinx.com/support/download/index.html/content/xilinx/en/downloadNav/vivado-design-tools/2018-3.html) and download two files for Vivado 2018.3.
-   (The version can be chosen on the left side if version 2018.3 is not already selected.)
-   1. The file "Vivado HLx 2018.3: WebPACK and Editions - Linux Self Extracting Web Installer".
+1. Go to the [Xilinx download page](https://www.xilinx.com/support/download/index.html/content/xilinx/en/downloadNav/vivado-design-tools/2020-1.html) and download two files for Vivado 2020.1.
+   (The version can be chosen on the left side if version 2020.1 is not already selected.)
+   1. The file "Xilinx Unified Installer 2020.1: Linux Self Extracting Web Installer".
    2. The "Digests" file below the download.
 
    ![Vivado download site](img/install_vivado/vivado_download.png)
@@ -185,8 +317,8 @@ To get started faster we use the web installer in the following.
 2. Before you proceed ensure that the download didn't get corrupted by verifying the checksum.
 
     ```console
-    $ sha512sum --check Xilinx_Vivado_SDK_Web_2018.3_1207_2324_Lin64.bin.digests
-    Xilinx_Vivado_SDK_Web_2018.3_1207_2324_Lin64.bin: OK
+    $ sha512sum --check Xilinx_Unified_2020.1_0602_1208_Lin64.bin.digests
+   Xilinx_Unified_2020.1_0602_1208_Lin64.bin: OK
     sha512sum: WARNING: 22 lines are improperly formatted
     ```
 
@@ -194,7 +326,7 @@ To get started faster we use the web installer in the following.
 3. Run the graphical installer.
 
     ```console
-    $ sh Xilinx_Vivado_SDK_Web_2018.3_1207_2324_Lin64.bin
+    $ sh Xilinx_Unified_2020.1_0602_1208_Lin64.bin
     ```
 
 4. Now you need to click through the installer.

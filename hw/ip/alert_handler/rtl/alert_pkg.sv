@@ -9,8 +9,6 @@ package alert_pkg;
   localparam int unsigned      NAlerts   = alert_handler_reg_pkg::NAlerts;   // maximum 252
   localparam int unsigned      EscCntDw  = alert_handler_reg_pkg::EscCntDw;  // maximum 32
   localparam int unsigned      AccuCntDw = alert_handler_reg_pkg::AccuCntDw; // maximum 32
-  // seed for the ping timer (must be nonzero!)
-  localparam logic [31:0]      LfsrSeed  = alert_handler_reg_pkg::LfsrSeed;
   // enable async transitions for specific RX/TX pairs
   localparam bit [NAlerts-1:0] AsyncOn   = alert_handler_reg_pkg::AsyncOn;
 
@@ -28,6 +26,15 @@ package alert_pkg;
   typedef enum logic [2:0] {Idle = 3'b000, Timeout = 3'b001, Terminal = 3'b011,
                             Phase0 = 3'b100, Phase1 = 3'b101, Phase2 = 3'b110,
                             Phase3 = 3'b111} cstate_e;
+
+  // These LFSR parameters have been generated with
+  // $ util/design/gen-lfsr-seed.py --width 32 --seed 2700182644
+  localparam int LfsrWidth = 32;
+  typedef logic [LfsrWidth-1:0]                        lfsr_seed_t;
+  typedef logic [LfsrWidth-1:0][$clog2(LfsrWidth)-1:0] lfsr_perm_t;
+  localparam lfsr_seed_t RndCnstLfsrSeedDefault = 32'he96064e5;
+  localparam lfsr_perm_t RndCnstLfsrPermDefault =
+      160'hebd1e5d4a1cee5afdb866a9c7a0278b899020d31;
 
   // struct containing the current alert handler state
   // can be used to gather crashdump information in HW

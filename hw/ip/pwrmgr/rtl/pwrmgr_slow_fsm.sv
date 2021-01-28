@@ -27,26 +27,15 @@ module pwrmgr_slow_fsm import pwrmgr_pkg::*; (
   input main_pd_ni,
   input io_clk_en_i,
   input core_clk_en_i,
+  input usb_clk_en_lp_i,
+  input usb_clk_en_active_i,
 
   // AST interface
   input pwr_ast_rsp_t ast_i,
   output pwr_ast_req_t ast_o
 );
 
-  // state enum
-  typedef enum logic [3:0] {
-    StReset,
-    StLowPower,
-    StMainPowerOn,
-    StClocksOn,
-    StReqPwrUp,
-    StIdle,
-    StAckPwrDn,
-    StClocksOff,
-    StMainPowerOff
-  } state_e;
-
-  state_e state_q, state_d;
+  slow_pwr_state_e state_q, state_d;
 
   // All signals crossing over to other domain must be flopped
   pwrup_cause_e cause_q, cause_d;
@@ -59,27 +48,33 @@ module pwrmgr_slow_fsm import pwrmgr_pkg::*; (
   logic pwr_clamp_q, pwr_clamp_d;
   logic core_clk_en_q, core_clk_en_d;
   logic io_clk_en_q, io_clk_en_d;
+  logic usb_clk_en_q, usb_clk_en_d;
 
   logic all_clks_valid;
   logic all_clks_invalid;
 
-  // TODO: This should come from an AST package long term and not be hardcoded.
-  // Tracked in #2010
-  assign all_clks_valid = ast_i.core_clk_val == 2'b10 && ast_i.io_clk_val == 2'b10;
+  // all clocks sources are valid
+  // if clocks (usb) not configured to be active, then just bypass check
+  assign all_clks_valid = (ast_i.core_clk_val == DiffValid) &
+     (ast_i.io_clk_val == DiffValid) &
+     (~usb_clk_en_active_i | ast_i.usb_clk_val == DiffValid);
 
-  // if clock were configured to turn off, make sure val is 2'b01
-  assign all_clks_invalid = (core_clk_en_i | ast_i.core_clk_val == 2'b01) &&
-                            (io_clk_en_i   | ast_i.io_clk_val == 2'b01);
+  // if clocks were configured to turn off, make sure val is invalid
+  // if clocks were not configured to turn off, just bypass the check
+  assign all_clks_invalid = (core_clk_en_i | ast_i.core_clk_val != DiffValid) &
+     (io_clk_en_i | ast_i.io_clk_val != DiffValid) &
+     (usb_clk_en_lp_i | ast_i.usb_clk_val != DiffValid);
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      state_q        <= StReset;
+      state_q        <= SlowPwrStateReset;
       cause_q        <= Por;
       cause_toggle_q <= 1'b0;
       pd_nq          <= 1'b0;
       pwr_clamp_q    <= 1'b1;
       core_clk_en_q  <= 1'b0;
       io_clk_en_q    <= 1'b0;
+      usb_clk_en_q   <= 1'b0;
       req_pwrup_q    <= 1'b0;
       ack_pwrdn_q    <= 1'b0;
     end else begin
@@ -90,6 +85,7 @@ module pwrmgr_slow_fsm import pwrmgr_pkg::*; (
       pwr_clamp_q    <= pwr_clamp_d;
       core_clk_en_q  <= core_clk_en_d;
       io_clk_en_q    <= io_clk_en_d;
+      usb_clk_en_q   <= usb_clk_en_d;
       req_pwrup_q    <= req_pwrup_d;
       ack_pwrdn_q    <= ack_pwrdn_d;
     end
@@ -103,90 +99,95 @@ module pwrmgr_slow_fsm import pwrmgr_pkg::*; (
     pwr_clamp_d    = pwr_clamp_q;
     core_clk_en_d  = core_clk_en_q;
     io_clk_en_d    = io_clk_en_q;
+    usb_clk_en_d   = usb_clk_en_q;
 
     req_pwrup_d    = req_pwrup_q;
     ack_pwrdn_d    = ack_pwrdn_q;
 
     unique case(state_q)
 
-      StReset: begin
-        state_d = StMainPowerOn;
+      SlowPwrStateReset: begin
+        state_d = SlowPwrStateMainPowerOn;
         cause_d = Por;
       end
 
-      StLowPower: begin
+      SlowPwrStateLowPower: begin
         // reset request behaves identically to a wakeup, other than the power-up cause being
         // different
         if (wakeup_i || reset_req_i) begin
-          state_d = StMainPowerOn;
+          state_d = SlowPwrStateMainPowerOn;
           cause_toggle_d = ~cause_toggle_q;
           cause_d = reset_req_i ? Reset : Wake;
         end
       end
 
-      StMainPowerOn: begin
+      SlowPwrStateMainPowerOn: begin
         pd_nd = 1'b1;
 
         if (ast_i.main_pok) begin
           pwr_clamp_d = 1'b0;
-          state_d = StClocksOn;
+          state_d = SlowPwrStateClocksOn;
         end
       end
 
-      StClocksOn: begin
+      SlowPwrStateClocksOn: begin
         core_clk_en_d = 1'b1;
         io_clk_en_d = 1'b1;
+        usb_clk_en_d = usb_clk_en_active_i;
 
         if (all_clks_valid) begin
-          state_d = StReqPwrUp;
+          state_d = SlowPwrStateReqPwrUp;
         end
       end
 
-      StReqPwrUp: begin
+      SlowPwrStateReqPwrUp: begin
         req_pwrup_d = 1'b1;
 
         // req_pwrdn_i should be 0 here to indicate
         // the request from the previous round has definitely completed
         if (ack_pwrup_i && !req_pwrdn_i) begin
           req_pwrup_d = 1'b0;
-          state_d = StIdle;
+          state_d = SlowPwrStateIdle;
         end
       end
 
-      StIdle: begin
+      SlowPwrStateIdle: begin
         // ack_pwrup_i should be 0 here to indicate
         // the ack from the previous round has definitively completed
+        usb_clk_en_d = usb_clk_en_active_i;
+
         if (req_pwrdn_i && !ack_pwrup_i) begin
-          state_d = StAckPwrDn;
+          state_d = SlowPwrStateAckPwrDn;
         end
       end
 
-      StAckPwrDn: begin
+      SlowPwrStateAckPwrDn: begin
         ack_pwrdn_d = 1'b1;
 
         if (!req_pwrdn_i) begin
           ack_pwrdn_d = 1'b0;
-          state_d = StClocksOff;
+          state_d = SlowPwrStateClocksOff;
         end
       end
 
-      StClocksOff: begin
+      SlowPwrStateClocksOff: begin
         core_clk_en_d = core_clk_en_i;
         io_clk_en_d = io_clk_en_i;
+        usb_clk_en_d = usb_clk_en_lp_i;
 
         if (all_clks_invalid) begin
           // if main power is turned off, assert clamp ahead
           pwr_clamp_d = ~main_pd_ni;
-          state_d = StMainPowerOff;
+          state_d = SlowPwrStateMainPowerOff;
         end
       end
 
-      StMainPowerOff: begin
+      SlowPwrStateMainPowerOff: begin
         pd_nd = main_pd_ni;
 
         // if power is never turned off, proceed directly to low power state
         if (!ast_i.main_pok | main_pd_ni) begin
-          state_d = StLowPower;
+          state_d = SlowPwrStateLowPower;
         end
       end
 
@@ -196,6 +197,7 @@ module pwrmgr_slow_fsm import pwrmgr_pkg::*; (
         pwr_clamp_d   = 1'b1;
         core_clk_en_d = 1'b0;
         io_clk_en_d   = 1'b0;
+        usb_clk_en_d  = 1'b0;
       end
 
 
@@ -210,6 +212,7 @@ module pwrmgr_slow_fsm import pwrmgr_pkg::*; (
 
   assign ast_o.core_clk_en = core_clk_en_q;
   assign ast_o.io_clk_en = io_clk_en_q;
+  assign ast_o.usb_clk_en = usb_clk_en_q;
   assign ast_o.main_pd_n = pd_nq;
   assign ast_o.pwr_clamp = pwr_clamp_q;
 

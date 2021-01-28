@@ -6,15 +6,68 @@
 
 package aes_pkg;
 
+// Widths of signals carrying pseudo-random data for clearing and masking and purposes
+parameter int unsigned WidthPRDClearing = 64;
+parameter int unsigned WidthPRDSBox     = 10; // Number PRD bits per S-Box, not incl. the 8 bits
+                                              // for the output mask
+parameter int unsigned WidthPRDData     = 16*(8+WidthPRDSBox); // 16 S-Boxes for the data path
+parameter int unsigned WidthPRDKey      = 4*(8+WidthPRDSBox);  // 4 S-Boxes for the key expand
+parameter int unsigned WidthPRDMasking  = WidthPRDData + WidthPRDKey;
+
+parameter int unsigned ChunkSizePRDMasking = WidthPRDMasking/10;
+
+// Clearing PRNG default LFSR seed and permutation
+// These LFSR parameters have been generated with
+// $ util/design/gen-lfsr-seed.py --width 64 --seed 31468618 --prefix "Clearing"
+parameter int ClearingLfsrWidth = 64;
+typedef logic [ClearingLfsrWidth-1:0] clearing_lfsr_seed_t;
+typedef logic [ClearingLfsrWidth-1:0][$clog2(ClearingLfsrWidth)-1:0] clearing_lfsr_perm_t;
+parameter clearing_lfsr_seed_t RndCnstClearingLfsrSeedDefault = 64'hc32d580f74f1713a;
+parameter clearing_lfsr_perm_t RndCnstClearingLfsrPermDefault = {
+  128'hb33fdfc81deb6292c21f8a3102585067,
+  256'h9c2f4be1bbe937b4b7c9d7f4e57568d99c8ae291a899143e0d8459d31b143223
+};
+
+// Masking PRNG default LFSR seed and permutation
+// We use a single seed that is split down into chunks internally. All LFSR chunks use the same
+// permutation.
+// These LFSR parameters have been generated with
+// $ util/design/gen-lfsr-seed.py --width 360 --seed 31468618 --prefix "Masking"
+parameter int MaskingLfsrWidth = 360;
+typedef logic [MaskingLfsrWidth-1:0] masking_lfsr_seed_t;
+parameter masking_lfsr_seed_t RndCnstMaskingLfsrSeedDefault = {
+  180'h5ae9b31605f9077a6b758a442031e1c4616ea343ec153,
+  180'h282a30c132b5723c5a4cf4743b3c7c32d580f74f1713a
+};
+
+// These LFSR parameters have been generated with
+// $ util/design/gen-lfsr-seed.py --width 36 --seed 31468618 --prefix "MskgChunk"
+parameter int MskgChunkLfsrWidth = 36;
+typedef logic [MskgChunkLfsrWidth-1:0][$clog2(MskgChunkLfsrWidth)-1:0] mskg_chunk_lfsr_perm_t;
+parameter mskg_chunk_lfsr_perm_t RndCnstMskgChunkLfsrPermDefault =
+    216'h6587da04c59c02125750f35e7634e08951122874022ce19b143211;
+
+typedef enum integer {
+  SBoxImplLut,                  // Unmasked LUT-based S-Box
+  SBoxImplCanright,             // Unmasked Canright S-Box, see aes_sbox_canright.sv
+  SBoxImplCanrightMasked,       // First-order masked Canright S-Box
+                                // see aes_sbox_canright_masked.sv
+  SBoxImplCanrightMaskedNoreuse // First-order masked Canright S-Box without mask reuse,
+                                // see aes_sbox_canright_masked_noreuse.sv
+} sbox_impl_e;
+
 typedef enum logic {
   AES_ENC = 1'b0,
   AES_DEC = 1'b1
 } aes_op_e;
 
-typedef enum logic [2:0] {
-  AES_ECB = 3'b001,
-  AES_CBC = 3'b010,
-  AES_CTR = 3'b100
+typedef enum logic [5:0] {
+  AES_ECB  = 6'b00_0001,
+  AES_CBC  = 6'b00_0010,
+  AES_CFB  = 6'b00_0100,
+  AES_OFB  = 6'b00_1000,
+  AES_CTR  = 6'b01_0000,
+  AES_NONE = 6'b10_0000
 } aes_mode_e;
 
 typedef enum logic {
@@ -28,75 +81,214 @@ typedef enum logic [2:0] {
   AES_256 = 3'b100
 } key_len_e;
 
-typedef enum logic {
-  DIP_DATA_IN,
-  DIP_CLEAR
+// Generic, sparse mux selector encodings
+
+// Encoding generated with:
+// $ ./sparse-fsm-encode.py -d 3 -m 2 -n 4 \
+//      -s 31468618 --language=sv
+//
+// Hamming distance histogram:
+//
+//  0: --
+//  1: --
+//  2: --
+//  3: |||||||||||||||||||| (100.00%)
+//  4: --
+//
+// Minimum Hamming distance: 3
+// Maximum Hamming distance: 3
+//
+parameter int Mux2SelWidth = 4;
+typedef enum logic [Mux2SelWidth-1:0] {
+  MUX2_SEL_0 = 4'b0111,
+  MUX2_SEL_1 = 4'b1100
+} mux2_sel_e;
+
+// Encoding generated with:
+// $ ./sparse-fsm-encode.py -d 3 -m 3 -n 5 \
+//      -s 31468618 --language=sv
+//
+// Hamming distance histogram:
+//
+//  0: --
+//  1: --
+//  2: --
+//  3: |||||||||||||||||||| (66.67%)
+//  4: |||||||||| (33.33%)
+//  5: --
+//
+// Minimum Hamming distance: 3
+// Maximum Hamming distance: 4
+//
+parameter int Mux3SelWidth = 5;
+typedef enum logic [Mux3SelWidth-1:0] {
+  MUX3_SEL_0 = 5'b01110,
+  MUX3_SEL_1 = 5'b11000,
+  MUX3_SEL_2 = 5'b00001
+} mux3_sel_e;
+
+// Encoding generated with:
+// $ ./sparse-fsm-encode.py -d 3 -m 4 -n 5 \
+//      -s 31468618 --language=sv
+//
+// Hamming distance histogram:
+//
+//  0: --
+//  1: --
+//  2: --
+//  3: |||||||||||||||||||| (66.67%)
+//  4: |||||||||| (33.33%)
+//  5: --
+//
+// Minimum Hamming distance: 3
+// Maximum Hamming distance: 4
+//
+parameter int Mux4SelWidth = 5;
+typedef enum logic [Mux4SelWidth-1:0] {
+  MUX4_SEL_0 = 5'b01110,
+  MUX4_SEL_1 = 5'b11000,
+  MUX4_SEL_2 = 5'b00001,
+  MUX4_SEL_3 = 5'b10111
+} mux4_sel_e;
+
+// $ ./sparse-fsm-encode.py -d 3 -m 6 -n 6 \
+//      -s 31468618 --language=sv
+//
+// Hamming distance histogram:
+//
+//  0: --
+//  1: --
+//  2: --
+//  3: |||||||||||||||||||| (53.33%)
+//  4: ||||||||||||||| (40.00%)
+//  5: || (6.67%)
+//  6: --
+//
+// Minimum Hamming distance: 3
+// Maximum Hamming distance: 5
+//
+localparam int Mux6SelWidth = 6;
+typedef enum logic [Mux6SelWidth-1:0] {
+  MUX6_SEL_0 = 6'b011101,
+  MUX6_SEL_1 = 6'b110000,
+  MUX6_SEL_2 = 6'b001000,
+  MUX6_SEL_3 = 6'b000011,
+  MUX6_SEL_4 = 6'b111110,
+  MUX6_SEL_5 = 6'b100101
+} mux6_sel_e;
+
+// Mux selector signal types. These use the generic types defined above.
+
+parameter int DIPSelNum = 2;
+parameter int DIPSelWidth = Mux2SelWidth;
+typedef enum logic [DIPSelWidth-1:0] {
+  DIP_DATA_IN = MUX2_SEL_0,
+  DIP_CLEAR   = MUX2_SEL_1
 } dip_sel_e;
 
-typedef enum logic {
-  SI_ZERO,
-  SI_DATA
+parameter int SISelNum = 2;
+parameter int SISelWidth = Mux2SelWidth;
+typedef enum logic [SISelWidth-1:0] {
+  SI_ZERO = MUX2_SEL_0,
+  SI_DATA = MUX2_SEL_1
 } si_sel_e;
 
-typedef enum logic {
-  ADD_SI_ZERO,
-  ADD_SI_IV
+parameter int AddSISelNum = 2;
+parameter int AddSISelWidth = Mux2SelWidth;
+typedef enum logic [AddSISelWidth-1:0] {
+  ADD_SI_ZERO = MUX2_SEL_0,
+  ADD_SI_IV   = MUX2_SEL_1
 } add_si_sel_e;
 
-typedef enum logic [1:0] {
-  STATE_INIT,
-  STATE_ROUND,
-  STATE_CLEAR
+parameter int StateSelNum = 3;
+parameter int StateSelWidth = Mux3SelWidth;
+typedef enum logic [StateSelWidth-1:0] {
+  STATE_INIT  = MUX3_SEL_0,
+  STATE_ROUND = MUX3_SEL_1,
+  STATE_CLEAR = MUX3_SEL_2
 } state_sel_e;
 
-typedef enum logic [1:0] {
-  ADD_RK_INIT,
-  ADD_RK_ROUND,
-  ADD_RK_FINAL
+parameter int AddRKSelNum = 3;
+parameter int AddRKSelWidth = Mux3SelWidth;
+typedef enum logic [AddRKSelWidth-1:0] {
+  ADD_RK_INIT  = MUX3_SEL_0,
+  ADD_RK_ROUND = MUX3_SEL_1,
+  ADD_RK_FINAL = MUX3_SEL_2
 } add_rk_sel_e;
 
-typedef enum logic {
-  KEY_INIT_INPUT,
-  KEY_INIT_CLEAR
+parameter int KeyInitSelNum = 2;
+parameter int KeyInitSelWidth = Mux2SelWidth;
+typedef enum logic [KeyInitSelWidth-1:0] {
+  KEY_INIT_INPUT = MUX2_SEL_0,
+  KEY_INIT_CLEAR = MUX2_SEL_1
 } key_init_sel_e;
 
-typedef enum logic [2:0] {
-  IV_INPUT,
-  IV_DATA_OUT,
-  IV_DATA_IN_PREV,
-  IV_CTR,
-  IV_CLEAR
+parameter int IVSelNum = 6;
+parameter int IVSelWidth = Mux6SelWidth;
+typedef enum logic [IVSelWidth-1:0] {
+  IV_INPUT        = MUX6_SEL_0,
+  IV_DATA_OUT     = MUX6_SEL_1,
+  IV_DATA_OUT_RAW = MUX6_SEL_2,
+  IV_DATA_IN_PREV = MUX6_SEL_3,
+  IV_CTR          = MUX6_SEL_4,
+  IV_CLEAR        = MUX6_SEL_5
 } iv_sel_e;
 
-typedef enum logic [1:0] {
-  KEY_FULL_ENC_INIT,
-  KEY_FULL_DEC_INIT,
-  KEY_FULL_ROUND,
-  KEY_FULL_CLEAR
+parameter int KeyFullSelNum = 4;
+parameter int KeyFullSelWidth = Mux4SelWidth;
+typedef enum logic [KeyFullSelWidth-1:0] {
+  KEY_FULL_ENC_INIT = MUX4_SEL_0,
+  KEY_FULL_DEC_INIT = MUX4_SEL_1,
+  KEY_FULL_ROUND    = MUX4_SEL_2,
+  KEY_FULL_CLEAR    = MUX4_SEL_3
 } key_full_sel_e;
 
-typedef enum logic {
-  KEY_DEC_EXPAND,
-  KEY_DEC_CLEAR
+parameter int KeyDecSelNum = 2;
+parameter int KeyDecSelWidth = Mux2SelWidth;
+typedef enum logic [KeyDecSelWidth-1:0] {
+  KEY_DEC_EXPAND = MUX2_SEL_0,
+  KEY_DEC_CLEAR  = MUX2_SEL_1
 } key_dec_sel_e;
 
-typedef enum logic [1:0] {
-  KEY_WORDS_0123,
-  KEY_WORDS_2345,
-  KEY_WORDS_4567,
-  KEY_WORDS_ZERO
+parameter int KeyWordsSelNum = 4;
+parameter int KeyWordsSelWidth = Mux4SelWidth;
+typedef enum logic [KeyWordsSelWidth-1:0] {
+  KEY_WORDS_0123 = MUX4_SEL_0,
+  KEY_WORDS_2345 = MUX4_SEL_1,
+  KEY_WORDS_4567 = MUX4_SEL_2,
+  KEY_WORDS_ZERO = MUX4_SEL_3
 } key_words_sel_e;
 
-typedef enum logic {
-  ROUND_KEY_DIRECT,
-  ROUND_KEY_MIXED
+parameter int RoundKeySelNum = 2;
+parameter int RoundKeySelWidth = Mux2SelWidth;
+typedef enum logic [RoundKeySelWidth-1:0] {
+  ROUND_KEY_DIRECT = MUX2_SEL_0,
+  ROUND_KEY_MIXED  = MUX2_SEL_1
 } round_key_sel_e;
 
-typedef enum logic [2:0] {
-  ADD_SO_ZERO,
-  ADD_SO_IV,
-  ADD_SO_DIP
+parameter int AddSOSelNum = 3;
+parameter int AddSOSelWidth = Mux3SelWidth;
+typedef enum logic [AddSOSelWidth-1:0] {
+  ADD_SO_ZERO = MUX3_SEL_0,
+  ADD_SO_IV   = MUX3_SEL_1,
+  ADD_SO_DIP  = MUX3_SEL_2
 } add_so_sel_e;
+
+typedef struct packed {
+  logic      force_zero_masks;
+  logic      manual_operation;
+  key_len_e  key_len;
+  aes_mode_e mode;
+  aes_op_e   operation;
+} ctrl_reg_t;
+
+parameter ctrl_reg_t CTRL_RESET = '{
+  force_zero_masks: '0,
+  manual_operation: '0,
+  key_len:          AES_128,
+  mode:             AES_NONE,
+  operation:        AES_ENC
+};
 
 // Multiplication by {02} (i.e. x) on GF(2^8)
 // with field generating polynomial {01}{1b} (9'h11b)
@@ -180,6 +372,44 @@ function automatic logic [7:0] aes_mvm(
     end
   end
   return vec_c;
+endfunction
+
+// Functions for extracting  SubBytes output masks and additional pseudo-random data (PRD) from the
+// output of the masking PRNG on a row basis. We have:
+// prng_output = { prd_key_expand, ... , sb_prd[4], sb_out_mask[4], sb_prd[0], sb_out_mask[0] }
+
+// Extract one row of output masks for SubBytes from PRNG output. The output mask is in the LSBs of
+// each segment.
+function automatic logic [3:0][7:0] aes_sb_out_mask_get(logic [4*(8+WidthPRDSBox)-1:0] in);
+  logic [3:0][7:0] sb_out_mask;
+  for (int i=0; i<4; i++) begin
+    sb_out_mask[i] = in[i*(8+WidthPRDSBox) +: 8];
+  end
+  return sb_out_mask;
+endfunction
+
+// Extract one row of PRD for SubBytes from PRNG output. The PRD part is in the MSBs of each
+// segment.
+function automatic logic [3:0][WidthPRDSBox-1:0] aes_sb_prd_get(logic [4*(8+WidthPRDSBox)-1:0] in);
+  logic [3:0][WidthPRDSBox-1:0] sb_prd;
+  for (int i=0; i<4; i++) begin
+    sb_prd[i] = in[i*(8+WidthPRDSBox)+8 +: WidthPRDSBox];
+  end
+  return sb_prd;
+endfunction
+
+// Undo extraction of output masks and PRD for SubBytes for one row. This can be used to verify
+// proper extraction (no overlap of masks and PRD, no unused PRNG output).
+function automatic logic [4*(8+WidthPRDSBox)-1:0] aes_sb_out_mask_prd_concat(
+  logic              [3:0][7:0] sb_out_mask,
+  logic [3:0][WidthPRDSBox-1:0] sb_prd
+);
+  logic [4*(8+WidthPRDSBox)-1:0] sb_out_mask_prd;
+  for (int i=0; i<4; i++) begin
+    sb_out_mask_prd[i*(8+WidthPRDSBox)   +: 8]            = sb_out_mask[i];
+    sb_out_mask_prd[i*(8+WidthPRDSBox)+8 +: WidthPRDSBox] = sb_prd[i];
+  end
+  return sb_out_mask_prd;
 endfunction
 
 endpackage

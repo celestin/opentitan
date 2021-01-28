@@ -8,11 +8,9 @@ r""" TileLink-Uncached Lightweight Xbar generator
 import argparse
 import logging as log
 import sys
-from pathlib import Path, PurePath
+from pathlib import Path
 
 import hjson
-import mako
-import pkg_resources
 
 import tlgen
 
@@ -34,10 +32,9 @@ def main():
         help=
         "Target directory. tlgen needs 'rtl/' and 'dv/' directory under the target dir"
     )
-    parser.add_argument(
-        '--ip-path',
-        default="",
-        help='''
+    parser.add_argument('--ip-path',
+                        default="",
+                        help='''
         Additional path to generated rtl/ or dv/ folders: outdir/ip_path/rtl
         Only needed when there are multiple xbar in outdir''')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose')
@@ -78,27 +75,16 @@ def main():
         log.error("Elaboration failed." + repr(xbar))
 
     # Generate
-    out_rtl, out_pkg, out_core = tlgen.generate(xbar)
+    results = tlgen.generate(xbar)
 
-    rtl_path = Path(args.outdir) / args.ip_path / 'rtl/autogen'
-    rtl_path.mkdir(parents=True, exist_ok=True)
     dv_path = Path(args.outdir) / args.ip_path / 'dv/autogen'
     dv_path.mkdir(parents=True, exist_ok=True)
 
-    rtl_filename = "xbar_%s.sv" % (xbar.name)
-    rtl_filepath = rtl_path / rtl_filename
-    with rtl_filepath.open(mode='w', encoding='UTF-8') as fout:
-        fout.write(out_rtl)
-
-    pkg_filename = "tl_%s_pkg.sv" % (xbar.name)
-    pkg_filepath = rtl_path / pkg_filename
-    with pkg_filepath.open(mode='w', encoding='UTF-8') as fout:
-        fout.write(out_pkg)
-
-    core_filename = "xbar_%s.core" % (xbar.name)
-    core_filepath = rtl_path / core_filename
-    with core_filepath.open(mode='w', encoding='UTF-8') as fout:
-        fout.write(out_core)
+    for filename, filecontent in results:
+        filepath = Path(args.outdir) / args.ip_path / filename
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with filepath.open(mode='w', encoding='UTF-8') as fout:
+            fout.write(filecontent)
 
     # generate TB
     tlgen.generate_tb(xbar, dv_path)

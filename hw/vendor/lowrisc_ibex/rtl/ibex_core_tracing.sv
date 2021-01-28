@@ -2,28 +2,30 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-
 /**
  * Top level module of the ibex RISC-V core with tracing enabled
  */
+
 module ibex_core_tracing #(
-    parameter bit          PMPEnable                = 1'b0,
-    parameter int unsigned PMPGranularity           = 0,
-    parameter int unsigned PMPNumRegions            = 4,
-    parameter int unsigned MHPMCounterNum           = 0,
-    parameter int unsigned MHPMCounterWidth         = 40,
-    parameter bit          RV32E                    = 1'b0,
-    parameter bit          RV32M                    = 1'b1,
-    parameter bit          RV32B                    = 1'b0,
-    parameter bit          BranchTargetALU          = 1'b0,
-    parameter bit          WritebackStage           = 1'b0,
-    parameter              MultiplierImplementation = "fast",
-    parameter bit          ICache                   = 1'b0,
-    parameter bit          ICacheECC                = 1'b0,
-    parameter bit          DbgTriggerEn             = 1'b0,
-    parameter bit          SecureIbex               = 1'b0,
-    parameter int unsigned DmHaltAddr               = 32'h1A110800,
-    parameter int unsigned DmExceptionAddr          = 32'h1A110808
+    parameter bit                 PMPEnable        = 1'b0,
+    parameter int unsigned        PMPGranularity   = 0,
+    parameter int unsigned        PMPNumRegions    = 4,
+    parameter int unsigned        MHPMCounterNum   = 0,
+    parameter int unsigned        MHPMCounterWidth = 40,
+    parameter bit                 RV32E            = 1'b0,
+    parameter ibex_pkg::rv32m_e   RV32M            = ibex_pkg::RV32MFast,
+    parameter ibex_pkg::rv32b_e   RV32B            = ibex_pkg::RV32BNone,
+    parameter ibex_pkg::regfile_e RegFile          = ibex_pkg::RegFileFF,
+    parameter bit                 BranchTargetALU  = 1'b0,
+    parameter bit                 WritebackStage   = 1'b0,
+    parameter bit                 ICache           = 1'b0,
+    parameter bit                 ICacheECC        = 1'b0,
+    parameter bit                 BranchPredictor  = 1'b0,
+    parameter bit                 DbgTriggerEn     = 1'b0,
+    parameter int unsigned        DbgHwBreakNum    = 1,
+    parameter bit                 SecureIbex       = 1'b0,
+    parameter int unsigned        DmHaltAddr       = 32'h1A110800,
+    parameter int unsigned        DmExceptionAddr  = 32'h1A110808
 ) (
     // Clock and Reset
     input  logic        clk_i,
@@ -65,6 +67,8 @@ module ibex_core_tracing #(
 
     // CPU Control Signals
     input  logic        fetch_enable_i,
+    output logic        alert_minor_o,
+    output logic        alert_major_o,
     output logic        core_sleep_o
 
 );
@@ -83,6 +87,7 @@ module ibex_core_tracing #(
   logic        rvfi_halt;
   logic        rvfi_intr;
   logic [ 1:0] rvfi_mode;
+  logic [ 1:0] rvfi_ixl;
   logic [ 4:0] rvfi_rs1_addr;
   logic [ 4:0] rvfi_rs2_addr;
   logic [ 4:0] rvfi_rs3_addr;
@@ -100,23 +105,25 @@ module ibex_core_tracing #(
   logic [31:0] rvfi_mem_wdata;
 
   ibex_core #(
-    .PMPEnable                ( PMPEnable                ),
-    .PMPGranularity           ( PMPGranularity           ),
-    .PMPNumRegions            ( PMPNumRegions            ),
-    .MHPMCounterNum           ( MHPMCounterNum           ),
-    .MHPMCounterWidth         ( MHPMCounterWidth         ),
-    .RV32E                    ( RV32E                    ),
-    .RV32M                    ( RV32M                    ),
-    .RV32B                    ( RV32B                    ),
-    .BranchTargetALU          ( BranchTargetALU          ),
-    .MultiplierImplementation ( MultiplierImplementation ),
-    .ICache                   ( ICache                   ),
-    .ICacheECC                ( ICacheECC                ),
-    .DbgTriggerEn             ( DbgTriggerEn             ),
-    .WritebackStage           ( WritebackStage           ),
-    .SecureIbex               ( SecureIbex               ),
-    .DmHaltAddr               ( DmHaltAddr               ),
-    .DmExceptionAddr          ( DmExceptionAddr          )
+    .PMPEnable        ( PMPEnable        ),
+    .PMPGranularity   ( PMPGranularity   ),
+    .PMPNumRegions    ( PMPNumRegions    ),
+    .MHPMCounterNum   ( MHPMCounterNum   ),
+    .MHPMCounterWidth ( MHPMCounterWidth ),
+    .RV32E            ( RV32E            ),
+    .RV32M            ( RV32M            ),
+    .RV32B            ( RV32B            ),
+    .RegFile          ( RegFile          ),
+    .BranchTargetALU  ( BranchTargetALU  ),
+    .ICache           ( ICache           ),
+    .ICacheECC        ( ICacheECC        ),
+    .BranchPredictor  ( BranchPredictor  ),
+    .DbgTriggerEn     ( DbgTriggerEn     ),
+    .DbgHwBreakNum    ( DbgHwBreakNum    ),
+    .WritebackStage   ( WritebackStage   ),
+    .SecureIbex       ( SecureIbex       ),
+    .DmHaltAddr       ( DmHaltAddr       ),
+    .DmExceptionAddr  ( DmExceptionAddr  )
   ) u_ibex_core (
     .clk_i,
     .rst_ni,
@@ -158,6 +165,7 @@ module ibex_core_tracing #(
     .rvfi_halt,
     .rvfi_intr,
     .rvfi_mode,
+    .rvfi_ixl,
     .rvfi_rs1_addr,
     .rvfi_rs2_addr,
     .rvfi_rs3_addr,
@@ -175,6 +183,8 @@ module ibex_core_tracing #(
     .rvfi_mem_wdata,
 
     .fetch_enable_i,
+    .alert_minor_o,
+    .alert_major_o,
     .core_sleep_o
   );
 
@@ -192,6 +202,7 @@ module ibex_core_tracing #(
     .rvfi_halt,
     .rvfi_intr,
     .rvfi_mode,
+    .rvfi_ixl,
     .rvfi_rs1_addr,
     .rvfi_rs2_addr,
     .rvfi_rs3_addr,

@@ -2,7 +2,12 @@
 // HTML & Body
 
 html {
-  font-size: calc(77% + 6 * (100vw - 320px) / 1680);
+  /*
+  Explicitly set the font size to the typical browser default to work around a
+  bug in Chrome where <code> elements don't get the right font size when using
+  @font-size=1rem (https://bugs.chromium.org/p/chromium/issues/detail?id=833697)
+  */
+  font-size: 16px;
   scroll-behavior: smooth;
 }
 

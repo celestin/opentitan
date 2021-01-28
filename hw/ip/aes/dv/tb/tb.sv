@@ -14,22 +14,30 @@ module tb;
   `include "dv_macros.svh"
 
   wire clk, rst_n;
+  wire devmode;
   wire [NUM_MAX_INTERRUPTS-1:0] interrupts;
 
   // interfaces
   clk_rst_if clk_rst_if(.clk(clk), .rst_n(rst_n));
   pins_if #(NUM_MAX_INTERRUPTS) intr_if(interrupts);
 
-  pins_if #(1) devmode_if();
+  pins_if #(1) devmode_if(devmode);
   tl_if tl_if(.clk(clk), .rst_n(rst_n));
+
+  `DV_ALERT_IF_CONNECT
 
   // dut
   aes dut (
     .clk_i                (clk        ),
     .rst_ni               (rst_n      ),
 
+    .idle_o               (           ),
+
     .tl_i                 (tl_if.h2d  ),
-    .tl_o                 (tl_if.d2h  )
+    .tl_o                 (tl_if.d2h  ),
+
+    .alert_rx_i           ( alert_rx  ),
+    .alert_tx_o           ( alert_tx  )
   );
 
   initial begin

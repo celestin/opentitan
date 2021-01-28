@@ -1,5 +1,6 @@
 /*
  * Copyright 2018 Google LLC
+ * Copyright 2020 Andes Technology Co., Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +35,13 @@ package riscv_instr_pkg;
     int unsigned   size_in_bytes;
     bit [2:0]      xwr; // Excutable,Writable,Readale
   } mem_region_t;
+
+  // Initialization of the vregs
+  typedef enum {
+    SAME_VALUES_ALL_ELEMS,
+    RANDOM_VALUES_VMV,
+    RANDOM_VALUES_LOAD
+  } vreg_init_method_t;
 
   typedef enum bit [3:0] {
     BARE = 4'b0000,
@@ -89,9 +97,8 @@ package riscv_instr_pkg;
     RV64C,
     RV128I,
     RV128C,
-    RV32V,
+    RVV,
     RV32B,
-    RV64V,
     RV64B,
     RV32X,
     RV64X
@@ -474,12 +481,10 @@ package riscv_instr_pkg;
     VWMACC,
     VWMACCSU,
     VWMACCUS,
-    /*
-    VQMACCU,
-    VQMACC,
-    VQMACCSU,
-    VQMACCUS,
-    */
+    //VQMACCU,
+    //VQMACC,
+    //VQMACCSU,
+    //VQMACCUS,
     VMERGE,
     VMV,
     VSADDU,
@@ -494,6 +499,7 @@ package riscv_instr_pkg;
     VSSRA,
     VNCLIPU,
     VNCLIP,
+    // 14. Vector Floating-Point Instructions
     VFADD,
     VFSUB,
     VFRSUB,
@@ -543,7 +549,7 @@ package riscv_instr_pkg;
     VFNCVT_F_X_W,
     VFNCVT_F_F_W,
     VFNCVT_ROD_F_F_W,
-    // Vector reduction instruction
+    // 15. Vector reduction instruction
     VREDSUM_VS,
     VREDMAXU_VS,
     VREDMAX_VS,
@@ -590,6 +596,35 @@ package riscv_instr_pkg;
     VMV2R_V,
     VMV4R_V,
     VMV8R_V,
+    // Vector load/store instruction
+    VLE_V,
+    VSE_V,
+    VLSE_V,
+    VSSE_V,
+    VLXEI_V,
+    VSXEI_V,
+    VSUXEI_V,
+    VLEFF_V,
+    // Segmented load/store instruction
+    VLSEGE_V,
+    VSSEGE_V,
+    VLSEGEFF_V,
+    VLSSEGE_V,
+    VSSSEGE_V,
+    VLXSEGEI_V,
+    VSXSEGEI_V,
+    VSUXSEGEI_V,
+    // Vector AMO instruction
+    // EEW vector AMOs
+    VAMOSWAPE_V,
+    VAMOADDE_V,
+    VAMOXORE_V,
+    VAMOANDE_V,
+    VAMOORE_V,
+    VAMOMINE_V,
+    VAMOMAXE_V,
+    VAMOMINUE_V,
+    VAMOMAXUE_V,
     // Supervisor instruction
     DRET,
     MRET,
@@ -605,6 +640,9 @@ package riscv_instr_pkg;
 
   // Maximum virtual address bits used by the program
   parameter int MAX_USED_VADDR_BITS = 30;
+
+  parameter int SINGLE_PRECISION_FRACTION_BITS = 23;
+  parameter int DOUBLE_PRECISION_FRACTION_BITS = 52;
 
   typedef enum bit [4:0] {
     ZERO = 5'b00000,
@@ -645,7 +683,12 @@ package riscv_instr_pkg;
     VA_FORMAT,
     VS2_FORMAT, // op vd,vs2
     VL_FORMAT,
-    VS_FORMAT
+    VS_FORMAT,
+    VLX_FORMAT,
+    VSX_FORMAT,
+    VLS_FORMAT,
+    VSS_FORMAT,
+    VAMO_FORMAT
   } riscv_instr_format_t;
 
 
@@ -911,6 +954,10 @@ package riscv_instr_pkg;
     TDATA1          = 'h7A1,  // First Debug/Trace trigger data register
     TDATA2          = 'h7A2,  // Second Debug/Trace trigger data register
     TDATA3          = 'h7A3,  // Third Debug/Trace trigger data register
+    TINFO           = 'h7A4,  // Debug trigger info register
+    TCONTROL        = 'h7A5,  // Debug trigger control register
+    MCONTEXT        = 'h7A8,  // Machine mode trigger context register
+    SCONTEXT        = 'h7AA,  // Supervisor mode trigger context register
     DCSR            = 'h7B0,  // Debug control and status register
     DPC             = 'h7B1,  // Debug PC
     DSCRATCH0       = 'h7B2,  // Debug scratch register
@@ -1054,6 +1101,9 @@ package riscv_instr_pkg;
     bit                   r;
     // RV32: the pmpaddr is the top 32 bits of a 34 bit PMP address
     // RV64: the pmpaddr is the top 54 bits of a 56 bit PMP address
+    bit [XLEN - 1 : 0]    addr;
+    // The offset from the address of <main> - automatically populated by the
+    // PMP generation routine.
     bit [XLEN - 1 : 0]    offset;
 `else
   typedef struct{
@@ -1065,6 +1115,9 @@ package riscv_instr_pkg;
     rand bit                   r;
     // RV32: the pmpaddr is the top 32 bits of a 34 bit PMP address
     // RV64: the pmpaddr is the top 54 bits of a 56 bit PMP address
+    bit [XLEN - 1 : 0]    addr;
+    // The offset from the address of <main> - automatically populated by the
+    // PMP generation routine.
     rand bit [XLEN - 1 : 0]    offset;
 `endif
   } pmp_cfg_reg_t;
@@ -1083,10 +1136,11 @@ package riscv_instr_pkg;
 
   typedef struct packed {
     bit ill;
+    bit fractional_lmul;
     bit [XLEN-2:7] reserved;
-    bit [1:0] vediv;
-    bit [2:0] vsew;
-    bit [1:0] vlmul;
+    int vediv;
+    int vsew;
+    int vlmul;
   } vtype_t;
 
   typedef enum bit [1:0] {
@@ -1105,7 +1159,8 @@ package riscv_instr_pkg;
     ZBC,
     ZBR,
     ZBM,
-    ZBT
+    ZBT,
+    ZB_TMP // for uncategorized instructions
   } b_ext_group_t;
 
   `VECTOR_INCLUDE("riscv_instr_pkg_inc_variables.sv")
@@ -1292,6 +1347,28 @@ package riscv_instr_pkg;
     SYNCH, SYSTEM, COUNTER, CSR, CHANGELEVEL, TRAP, INTERRUPT, AMO
   };
 
+  function automatic void get_val(input string str, output bit [XLEN-1:0] val, input hex = 0);
+    if (str.len() > 2) begin
+      if (str.substr(0, 1) == "0x") begin
+        str = str.substr(2, str.len() -1);
+        val = str.atohex();
+        return;
+      end
+    end
+    if (hex) begin
+      val = str.atohex();
+    end else begin
+      if (str.substr(0, 0) == "-") begin
+        str = str.substr(1, str.len() - 1);
+        val = -str.atoi();
+      end else begin
+        val = str.atoi();
+      end
+    end
+    `uvm_info("riscv_instr_pkg", $sformatf("imm:%0s -> 0x%0x/%0d", str, val, $signed(val)),
+              UVM_FULL)
+  endfunction : get_val
+
   `include "riscv_vector_cfg.sv"
   `include "riscv_pmp_cfg.sv"
   typedef class riscv_instr;
@@ -1346,7 +1423,6 @@ package riscv_instr_pkg;
   `include "riscv_instr_sequence.sv"
   `include "riscv_asm_program_gen.sv"
   `include "riscv_debug_rom_gen.sv"
-  `include "riscv_instr_cov_item.sv"
   `include "riscv_instr_cover_group.sv"
   `include "user_extension.svh"
 

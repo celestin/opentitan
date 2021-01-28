@@ -77,19 +77,61 @@ class Modes():
         if not mode.name == self.name and not is_sub_mode:
             return False
 
-        # only merge the lists; if strs are different, then throw an error
-        attrs = self.__dict__.keys()
-        for attr in attrs:
-            # merge lists together
-            self_attr_val = getattr(self, attr)
-            mode_attr_val = getattr(mode, attr)
+        # Merge attributes in self with attributes in mode arg, since they are
+        # the same mode but set in separate files, or a sub-mode.
+        for attr, self_attr_val in self.__dict__.items():
+            mode_attr_val = getattr(mode, attr, None)
 
-            if type(self_attr_val) is list:
+            # If sub-mode, skip the name fields - they could differ.
+            if is_sub_mode and attr in ['name', 'mname']:
+                continue
+
+            # If mode's value is None, then nothing to do here.
+            if mode_attr_val is None:
+                continue
+
+            # If self value is None, then replace with mode's value.
+            if self_attr_val is None:
+                setattr(self, attr, mode_attr_val)
+                continue
+
+            # If they are equal, then nothing to do here.
+            if self_attr_val == mode_attr_val:
+                continue
+
+            # Extend if they are both lists.
+            if isinstance(self_attr_val, list):
+                assert isinstance(mode_attr_val, list)
                 self_attr_val.extend(mode_attr_val)
-                setattr(self, attr, self_attr_val)
+                continue
 
-            elif not is_sub_mode or attr not in ["name", "mname"]:
-                self.check_conflict(mode.name, attr, mode_attr_val)
+            # If the current val is default, replace with new.
+            scalar_types = {str: "", int: -1}
+            default_val = scalar_types.get(type(self_attr_val))
+
+            if type(self_attr_val) in scalar_types.keys(
+            ) and self_attr_val == default_val:
+                setattr(self, attr, mode_attr_val)
+                continue
+
+            # Check if their types are compatible.
+            if type(self_attr_val) != type(mode_attr_val):
+                log.error(
+                    "Mode %s cannot be merged into %s due to a conflict "
+                    "(type mismatch): %s: {%s(%s), %s(%s)}", mode.name,
+                    self.name, attr, str(self_attr_val),
+                    str(type(self_attr_val)), str(mode_attr_val),
+                    str(type(mode_attr_val)))
+                sys.exit(1)
+
+            # Check if they are different non-default values.
+            if self_attr_val != default_val and mode_attr_val != default_val:
+                log.error(
+                    "Mode %s cannot be merged into %s due to a conflict "
+                    "(unable to pick one from different values): "
+                    "%s: {%s, %s}", mode.name, self.name, attr,
+                    str(self_attr_val), str(mode_attr_val))
+                sys.exit(1)
 
         # Check newly appended sub_modes, remove 'self' and duplicates
         sub_modes = self.get_sub_modes()
@@ -101,26 +143,6 @@ class Modes():
                     new_sub_modes.append(sub_mode)
             self.set_sub_modes(new_sub_modes)
         return True
-
-    def check_conflict(self, name, attr, mode_attr_val):
-        self_attr_val = getattr(self, attr)
-        if self_attr_val == mode_attr_val:
-            return
-
-        default_val = None
-        if type(self_attr_val) is int:
-            default_val = -1
-        elif type(self_attr_val) is str:
-            default_val = ""
-
-        if self_attr_val != default_val and mode_attr_val != default_val:
-            log.error(
-                "mode %s cannot be merged into %s due to conflicting %s {%s, %s}",
-                name, self.name, attr, str(self_attr_val), str(mode_attr_val))
-            sys.exit(1)
-        elif self_attr_val == default_val:
-            self_attr_val = mode_attr_val
-            setattr(self, attr, self_attr_val)
 
     @staticmethod
     def create_modes(ModeType, mdicts):
@@ -240,9 +262,14 @@ class BuildModes(Modes):
         if not hasattr(self, "mname"):
             self.mname = "mode"
         self.is_sim_mode = 0
-        self.build_opts = []
-        self.run_opts = []
+        self.pre_build_cmds = []
+        self.post_build_cmds = []
         self.en_build_modes = []
+        self.build_opts = []
+        self.pre_run_cmds = []
+        self.post_run_cmds = []
+        self.run_opts = []
+        self.sw_images = []
 
         super().__init__(bdict)
         self.en_build_modes = list(set(self.en_build_modes))
@@ -265,14 +292,15 @@ class RunModes(Modes):
         self.type = "run"
         if not hasattr(self, "mname"):
             self.mname = "mode"
-        self.reseed = -1
+        self.reseed = None
+        self.pre_run_cmds = []
+        self.post_run_cmds = []
+        self.en_run_modes = []
         self.run_opts = []
         self.uvm_test = ""
         self.uvm_test_seq = ""
         self.build_mode = ""
-        self.en_run_modes = []
-        self.sw_dir = ""
-        self.sw_name = ""
+        self.sw_images = []
         self.sw_build_device = ""
 
         super().__init__(rdict)
@@ -294,12 +322,11 @@ class Tests(RunModes):
 
     # TODO: This info should be passed via hjson
     defaults = {
-        "reseed": -1,
+        "reseed": None,
         "uvm_test": "",
         "uvm_test_seq": "",
         "build_mode": "",
-        "sw_dir": "",
-        "sw_name": "",
+        "sw_images": [],
         "sw_build_device": "",
     }
 
@@ -387,20 +414,30 @@ class Tests(RunModes):
                     test_obj.name, test_obj.build_mode.name)
                 sys.exit(1)
 
-            # Merge build_mode's run_opts with self
+            # Merge build_mode's params with self
+            test_obj.pre_run_cmds.extend(test_obj.build_mode.pre_run_cmds)
+            test_obj.post_run_cmds.extend(test_obj.build_mode.post_run_cmds)
             test_obj.run_opts.extend(test_obj.build_mode.run_opts)
+            test_obj.sw_images.extend(test_obj.build_mode.sw_images)
 
         # Return the list of tests
         return tests_objs
 
     @staticmethod
-    def merge_global_opts(tests, global_build_opts, global_run_opts):
+    def merge_global_opts(tests, global_pre_build_cmds, global_post_build_cmds,
+                          global_build_opts, global_pre_run_cmds,
+                          global_post_run_cmds, global_run_opts, global_sw_images):
         processed_build_modes = []
         for test in tests:
             if test.build_mode.name not in processed_build_modes:
+                test.build_mode.pre_build_cmds.extend(global_pre_build_cmds)
+                test.build_mode.post_build_cmds.extend(global_post_build_cmds)
                 test.build_mode.build_opts.extend(global_build_opts)
                 processed_build_modes.append(test.build_mode.name)
+            test.pre_run_cmds.extend(global_pre_run_cmds)
+            test.post_run_cmds.extend(global_post_run_cmds)
             test.run_opts.extend(global_run_opts)
+            test.sw_images.extend(global_sw_images)
 
 
 class Regressions(Modes):
@@ -418,12 +455,25 @@ class Regressions(Modes):
         self.type = ""
         if not hasattr(self, "mname"):
             self.mname = "regression"
-        self.tests = []
-        self.reseed = -1
+
+        # The `tests` member is typically a list, but it defaults to None.
+        # There are 3 possible cases after all the HJson files are parsed, when
+        # this particular regression is supplied to be run:
+        #
+        # 1. `tests` == None:   This is treated as "run ALL available tests".
+        # 2. `tests` == []:     No available tests to run
+        # 3. `len(tests)` > 0:  The provided set of tests are run.
+        self.tests = None
         self.test_names = []
+
+        self.reseed = None
         self.excl_tests = []  # TODO: add support for this
         self.en_sim_modes = []
         self.en_run_modes = []
+        self.pre_build_cmds = []
+        self.post_build_cmds = []
+        self.pre_run_cmds = []
+        self.post_run_cmds = []
         self.build_opts = []
         self.run_opts = []
         super().__init__(regdict)
@@ -444,9 +494,10 @@ class Regressions(Modes):
 
             # Check for name conflicts with tests before merging
             if new_regression.name in Tests.item_names:
-                log.error("Test names and regression names are required to be unique. "
-                          "The regression \"%s\" bears the same name with an existing test. ",
-                          new_regression.name)
+                log.error(
+                    "Test names and regression names are required to be unique. "
+                    "The regression \"%s\" bears the same name with an existing test. ",
+                    new_regression.name)
                 sys.exit(1)
 
             for regression in regressions_objs:
@@ -484,13 +535,15 @@ class Regressions(Modes):
                     sys.exit(1)
 
                 # Check if sim_mode_obj's sub-modes are a part of regressions's
-                # sim modes- if yes, then it will cause duplication of opts
-                # Throw an error and exit.
+                # sim modes- if yes, then it will cause duplication of cmds &
+                # opts. Throw an error and exit.
                 for sim_mode_obj_sub in sim_mode_obj.en_build_modes:
                     if sim_mode_obj_sub in regression_obj.en_sim_modes:
-                        log.error("Regression \"%s\" enables sim_modes \"%s\" and \"%s\". "
-                                  "The former is already a sub_mode of the latter.",
-                                  regression_obj.name, sim_mode_obj_sub, sim_mode_obj.name)
+                        log.error(
+                            "Regression \"%s\" enables sim_modes \"%s\" and \"%s\". "
+                            "The former is already a sub_mode of the latter.",
+                            regression_obj.name, sim_mode_obj_sub,
+                            sim_mode_obj.name)
                         sys.exit(1)
 
                 # Check if sim_mode_obj is also passed on the command line, in
@@ -498,25 +551,37 @@ class Regressions(Modes):
                 if sim_mode_obj.name in sim_cfg.en_build_modes:
                     continue
 
-                # Merge the build and run opts from the sim modes
+                # Merge the build and run cmds & opts from the sim modes
+                regression_obj.pre_build_cmds.extend(
+                    sim_mode_obj.pre_build_cmds)
+                regression_obj.post_build_cmds.extend(
+                    sim_mode_obj.post_build_cmds)
                 regression_obj.build_opts.extend(sim_mode_obj.build_opts)
+                regression_obj.pre_run_cmds.extend(sim_mode_obj.pre_run_cmds)
+                regression_obj.post_run_cmds.extend(sim_mode_obj.post_run_cmds)
                 regression_obj.run_opts.extend(sim_mode_obj.run_opts)
 
             # Unpack the run_modes
-            # TODO: If there are other params other than run_opts throw an error and exit
+            # TODO: If there are other params other than run_opts throw an
+            # error and exit
             found_run_mode_objs = Modes.find_and_merge_modes(
                 regression_obj, regression_obj.en_run_modes, run_modes, False)
 
-            # Only merge the run_opts from the run_modes enabled
+            # Only merge the pre_run_cmds, post_run_cmds & run_opts from the
+            # run_modes enabled
             for run_mode_obj in found_run_mode_objs:
                 # Check if run_mode_obj is also passed on the command line, in
                 # which case, skip
                 if run_mode_obj.name in sim_cfg.en_run_modes:
                     continue
+                regression_obj.pre_run_cmds.extend(run_mode_obj.pre_run_cmds)
+                regression_obj.post_run_cmds.extend(run_mode_obj.post_run_cmds)
                 regression_obj.run_opts.extend(run_mode_obj.run_opts)
 
             # Unpack tests
-            if regression_obj.tests == []:
+            # If `tests` member resolves to None, then we add ALL available
+            # tests for running the regression.
+            if regression_obj.tests is None:
                 log.log(VERBOSE,
                         "Unpacking all tests in scope for regression \"%s\"",
                         regression_obj.name)
@@ -532,6 +597,7 @@ class Regressions(Modes):
                         log.error(
                             "Test \"%s\" added to regression \"%s\" not found!",
                             test, regression_obj.name)
+                        continue
                     tests_objs.append(test_obj)
                 regression_obj.tests = tests_objs
 
@@ -542,10 +608,14 @@ class Regressions(Modes):
         processed_build_modes = []
         for test in self.tests:
             if test.build_mode.name not in processed_build_modes:
+                test.build_mode.pre_build_cmds.extend(self.pre_build_cmds)
+                test.build_mode.post_build_cmds.extend(self.post_build_cmds)
                 test.build_mode.build_opts.extend(self.build_opts)
                 processed_build_modes.append(test.build_mode.name)
+            test.pre_run_cmds.extend(self.pre_run_cmds)
+            test.post_run_cmds.extend(self.post_run_cmds)
             test.run_opts.extend(self.run_opts)
 
             # Override reseed if available.
-            if self.reseed != -1:
+            if self.reseed is not None:
                 test.reseed = self.reseed

@@ -8,6 +8,28 @@
  */
 package ibex_pkg;
 
+/////////////////////
+// Parameter Enums //
+/////////////////////
+
+typedef enum integer {
+  RegFileFF    = 0,
+  RegFileFPGA  = 1,
+  RegFileLatch = 2
+} regfile_e;
+
+typedef enum integer {
+  RV32MNone        = 0,
+  RV32MSlow        = 1,
+  RV32MFast        = 2,
+  RV32MSingleCycle = 3
+} rv32m_e;
+
+typedef enum integer {
+  RV32BNone     = 0,
+  RV32BBalanced = 1,
+  RV32BFull     = 2
+} rv32b_e;
 
 /////////////
 // Opcodes //
@@ -55,9 +77,10 @@ typedef enum logic [5:0] {
   ALU_SLO,
   ALU_ROR,
   ALU_ROL,
-  ALU_REV,
-  ALU_REV8,
-  ALU_ORCB,
+  ALU_GREV,
+  ALU_GORC,
+  ALU_SHFL,
+  ALU_UNSHFL,
 
   // Comparisons
   ALU_LT,
@@ -78,6 +101,11 @@ typedef enum logic [5:0] {
   ALU_PACKU,
   ALU_PACKH,
 
+  // Sign-Extend
+  // RV32B
+  ALU_SEXTB,
+  ALU_SEXTH,
+
   // Bitcounting
   // RV32B
   ALU_CLZ,
@@ -93,7 +121,37 @@ typedef enum logic [5:0] {
   ALU_CMOV,
   ALU_CMIX,
   ALU_FSL,
-  ALU_FSR
+  ALU_FSR,
+
+  // Single-Bit Operations
+  // RV32B
+  ALU_SBSET,
+  ALU_SBCLR,
+  ALU_SBINV,
+  ALU_SBEXT,
+
+  // Bit Extract / Deposit
+  // RV32B
+  ALU_BEXT,
+  ALU_BDEP,
+
+  // Bit Field Place
+  // RV32B
+  ALU_BFP,
+
+  // Carry-less Multiply
+  // RV32B
+  ALU_CLMUL,
+  ALU_CLMULR,
+  ALU_CLMULH,
+
+  // Cyclic Redundancy Check
+  ALU_CRC32_B,
+  ALU_CRC32C_B,
+  ALU_CRC32_H,
+  ALU_CRC32C_H,
+  ALU_CRC32_W,
+  ALU_CRC32C_W
 } alu_op_e;
 
 typedef enum logic [1:0] {
@@ -194,7 +252,8 @@ typedef enum logic [2:0] {
   PC_JUMP,
   PC_EXC,
   PC_ERET,
-  PC_DRET
+  PC_DRET,
+  PC_BP
 } pc_sel_e;
 
 // Exception PC mux selection
@@ -420,7 +479,8 @@ typedef enum logic[11:0] {
   CSR_MHPMCOUNTER29H = 12'hB9D,
   CSR_MHPMCOUNTER30H = 12'hB9E,
   CSR_MHPMCOUNTER31H = 12'hB9F,
-  CSR_CPUCTRL        = 12'h7C0
+  CSR_CPUCTRL        = 12'h7C0,
+  CSR_SECURESEED     = 12'h7C1
 } csr_num_e;
 
 // CSR pmp-related offsets
@@ -434,6 +494,9 @@ parameter int unsigned CSR_MSTATUS_MPP_BIT_LOW  = 11;
 parameter int unsigned CSR_MSTATUS_MPP_BIT_HIGH = 12;
 parameter int unsigned CSR_MSTATUS_MPRV_BIT     = 17;
 parameter int unsigned CSR_MSTATUS_TW_BIT       = 21;
+
+// CSR machine ISA
+parameter logic [1:0] CSR_MISA_MXL = 2'd1; // M-XLEN: XLEN in M-Mode for RV32
 
 // CSR interrupt pending/enable bits
 parameter int unsigned CSR_MSIX_BIT      = 3;

@@ -68,11 +68,41 @@ module xbar_main_bind;
     .h2d    (tl_hmac_o),
     .d2h    (tl_hmac_i)
   );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_kmac (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_kmac_o),
+    .d2h    (tl_kmac_i)
+  );
   bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_aes (
     .clk_i  (clk_main_i),
     .rst_ni (rst_main_ni),
     .h2d    (tl_aes_o),
     .d2h    (tl_aes_i)
+  );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_entropy_src (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_entropy_src_o),
+    .d2h    (tl_entropy_src_i)
+  );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_csrng (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_csrng_o),
+    .d2h    (tl_csrng_i)
+  );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_edn0 (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_edn0_o),
+    .d2h    (tl_edn0_i)
+  );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_edn1 (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_edn1_o),
+    .d2h    (tl_edn1_i)
   );
   bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_rv_plic (
     .clk_i  (clk_main_i),
@@ -86,17 +116,29 @@ module xbar_main_bind;
     .h2d    (tl_pinmux_o),
     .d2h    (tl_pinmux_i)
   );
-  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_alert_handler (
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_padctrl (
     .clk_i  (clk_main_i),
-    .rst_ni (rst_main_ni),
-    .h2d    (tl_alert_handler_o),
-    .d2h    (tl_alert_handler_i)
+    .rst_ni (rst_fixed_ni),
+    .h2d    (tl_padctrl_o),
+    .d2h    (tl_padctrl_i)
   );
-  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_nmi_gen (
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_otbn (
     .clk_i  (clk_main_i),
     .rst_ni (rst_main_ni),
-    .h2d    (tl_nmi_gen_o),
-    .d2h    (tl_nmi_gen_i)
+    .h2d    (tl_otbn_o),
+    .d2h    (tl_otbn_i)
+  );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_keymgr (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_keymgr_o),
+    .d2h    (tl_keymgr_i)
+  );
+  bind xbar_main tlul_assert #(.EndpointType("Host")) tlul_assert_device_sram_ctrl_main (
+    .clk_i  (clk_main_i),
+    .rst_ni (rst_main_ni),
+    .h2d    (tl_sram_ctrl_main_o),
+    .d2h    (tl_sram_ctrl_main_i)
   );
 
 endmodule

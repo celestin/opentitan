@@ -32,6 +32,8 @@ class riscv_instr extends uvm_object;
   static privileged_reg_t    exclude_reg[];
   static privileged_reg_t    include_reg[];
 
+  riscv_instr_gen_config     m_cfg;
+
   // Instruction attributes
   riscv_instr_group_t        group;
   riscv_instr_format_t       format;
@@ -111,8 +113,8 @@ class riscv_instr extends uvm_object;
       riscv_instr instr_inst;
       if (instr_name inside {unsupported_instr}) continue;
       instr_inst = create_instr(instr_name);
-      if (!instr_inst.is_supported(cfg)) continue;
       instr_template[instr_name] = instr_inst;
+      if (!instr_inst.is_supported(cfg)) continue;
       // C_JAL is RV32C only instruction
       if ((XLEN != 32) && (instr_name == C_JAL)) continue;
       if ((SP inside {cfg.reserved_regs}) && (instr_name inside {C_ADDI16SP})) begin
@@ -124,7 +126,11 @@ class riscv_instr extends uvm_object;
           !(cfg.disable_compressed_instr &&
             (instr_inst.group inside {RV32C, RV64C, RV32DC, RV32FC, RV128C})) &&
           !(!cfg.enable_floating_point &&
-            (instr_inst.group inside {RV32F, RV64F, RV32D, RV64D}))
+            (instr_inst.group inside {RV32F, RV64F, RV32D, RV64D})) &&
+          !(!cfg.enable_vector_extension &&
+            (instr_inst.group inside {RVV})) &&
+          !(cfg.vector_instr_only &&
+            !(instr_inst.group inside {RVV}))
           ) begin
         instr_category[instr_inst.category].push_back(instr_name);
         instr_group[instr_inst.group].push_back(instr_name);
@@ -181,7 +187,8 @@ class riscv_instr extends uvm_object;
     if (!cfg.no_ebreak) begin
       basic_instr = {basic_instr, EBREAK};
       foreach (riscv_instr_pkg::supported_isa[i]) begin
-        if (RV32C inside {riscv_instr_pkg::supported_isa[i]}) begin
+        if (RV32C inside {riscv_instr_pkg::supported_isa[i]} &&
+            !cfg.disable_compressed_instr) begin
           basic_instr = {basic_instr, C_EBREAK};
           break;
         end
@@ -262,12 +269,27 @@ class riscv_instr extends uvm_object;
      return instr_h;
   endfunction : get_rand_instr
 
-  static function riscv_instr get_load_store_instr(riscv_instr_name_t load_store_instr[] = {});
+  static function riscv_instr get_load_store_instr(riscv_instr_name_t load_store_instr[$] = {});
      riscv_instr instr_h;
      int unsigned idx;
+     int unsigned i;
      riscv_instr_name_t name;
      if (load_store_instr.size() == 0) begin
        load_store_instr = {instr_category[LOAD], instr_category[STORE]};
+     end
+     // Filter out unsupported load/store instruction
+     if (unsupported_instr.size() > 0) begin
+       while (i < load_store_instr.size()) begin
+         if (load_store_instr[i] inside {unsupported_instr}) begin
+           load_store_instr.delete(i);
+         end else begin
+           i++;
+         end
+       end
+     end
+     if (load_store_instr.size() == 0) begin
+       $error("Cannot find available load/store instruction");
+       $fatal(1);
      end
      idx = $urandom_range(0, load_store_instr.size()-1);
      name = load_store_instr[idx];
@@ -647,5 +669,7 @@ class riscv_instr extends uvm_object;
   virtual function void update_imm_str();
     imm_str = $sformatf("%0d", $signed(imm));
   endfunction
+
+  `include "isa/riscv_instr_cov.svh"
 
 endclass

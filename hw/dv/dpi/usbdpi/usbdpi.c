@@ -21,6 +21,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+// Historically the simulation started too fast to connect to all
+// the fifos and terminals without loss of output. So a delay was added.
+// Today the startup is slow enough this does not seem to be needed.
+// In case things change again Im going to leave this behind a define
+// for now, but if this continues not to be needed the code can be deleted.
+// Uncomment next line if you need the delay
+// #define NEED_SLEEP
+
 static const char *st_states[] = {"ST_IDLE 0", "ST_SEND 1", "ST_GET 2",
                                   "ST_SYNC 3", "ST_EOP 4",  "ST_EOP0 5"};
 
@@ -39,6 +47,7 @@ void *usbdpi_create(const char *name, int loglevel) {
   ctx->frame = 0;
   ctx->framepend = 0;
   ctx->lastframe = 0;
+  ctx->last_pu = 0;
   ctx->inframe = 4;
   ctx->state = ST_IDLE;
   ctx->driving = 0;
@@ -53,32 +62,23 @@ void *usbdpi_create(const char *name, int loglevel) {
   assert(cwd_rv != NULL);
 
   int rv;
-  rv = snprintf(ctx->fifo_pathname, PATH_MAX, "%s/%s", cwd, name);
+
+  // Monitor log file
+  rv = snprintf(ctx->mon_pathname, PATH_MAX, "%s/%s.log", cwd, name);
   assert(rv <= PATH_MAX && rv > 0);
-
-  // Delete the file if it still exists (simulation crashed)
-  rv = unlink(ctx->fifo_pathname);
-
-  rv = mkfifo(ctx->fifo_pathname, 0644);  // writes are not supported currently
-  if (rv != 0) {
-    fprintf(stderr, "USB: Unable to create FIFO at %s: %s\n",
-            ctx->fifo_pathname, strerror(errno));
+  ctx->mon_file = fopen(ctx->mon_pathname, "w");
+  if (ctx->mon_file == NULL) {
+    fprintf(stderr, "USB: Unable to open monitor file at %s: %s\n",
+            ctx->mon_pathname, strerror(errno));
     return NULL;
   }
-
-  ctx->fifo_fd = open(ctx->fifo_pathname, O_RDWR);
-  if (ctx->fifo_fd < 0) {
-    fprintf(stderr, "USB: Unable to open FIFO at %s: %s\n", ctx->fifo_pathname,
-            strerror(errno));
-    return NULL;
-  }
-
+  // more useful for tail -f
+  setlinebuf(ctx->mon_file);
   printf(
-      "\n"
-      "USB: FIFO pipe created at %s. Run\n"
-      "$ cat %s\n"
-      "to observe the output.\n",
-      ctx->fifo_pathname, ctx->fifo_pathname);
+      "\nUSB: Monitor output file created at %s. Works well with tail:\n"
+      "$ tail -f %s\n",
+      ctx->mon_pathname, ctx->mon_pathname);
+
   return (void *)ctx;
 }
 
@@ -95,13 +95,13 @@ void usbdpi_device_to_host(void *ctx_void, const svBitVecVal *usb_d2p) {
   char raw_str[D2P_BITS + 1];
   {
     int i;
-    for (i = 0; i < 5; i++) {
-      raw_str[5 - i - 1] = !!(d2p & (1 << i)) + '0';
+    for (i = 0; i < D2P_BITS; i++) {
+      raw_str[D2P_BITS - i - 1] = d2p & (1 << i) ? '1' : '0';
     }
   }
   raw_str[D2P_BITS] = 0;
 
-  if (d2p & (D2P_DP_EN | D2P_DN_EN)) {
+  if (d2p & (D2P_DP_EN | D2P_DN_EN | D2P_D_EN)) {
     if (ctx->state == ST_SEND) {
       printf("USB: %4x %8d error state %s hs %s and device drives\n",
              ctx->frame, ctx->tick, st_states[ctx->state],
@@ -114,18 +114,57 @@ void usbdpi_device_to_host(void *ctx_void, const svBitVecVal *usb_d2p) {
     }
   }
 
-  dp = (((d2p & D2P_DP_EN) && (d2p & D2P_DP)) ||
-        (!(d2p & D2P_DP_EN) && (d2p & D2P_PU)))
-           ? 1
-           : 0;
-
-  dn = ((d2p & D2P_DN_EN) && (d2p & D2P_DN)) ? 1 : 0;
+  if ((d2p & D2P_DNPU) && (d2p & D2P_DPPU)) {
+    printf("USB: %4x %8d error both pullups are driven\n", ctx->frame,
+           ctx->tick);
+  }
+  if ((d2p & D2P_PU) != ctx->last_pu) {
+    n = snprintf(obuf, MAX_OBUF, "%4x %8d Pullup change to %s%s%s\n",
+                 ctx->frame, ctx->tick, (d2p & D2P_DPPU) ? "DP Pulled up " : "",
+                 (d2p & D2P_DNPU) ? "DN Pulled up " : "",
+                 (d2p & D2P_TXMODE_SE) ? "SingleEnded" : "Differential");
+    ssize_t written = fwrite(obuf, sizeof(char), (size_t)n, ctx->mon_file);
+    assert(written == n);
+    ctx->last_pu = d2p & D2P_PU;
+  }
+  if (d2p & D2P_TXMODE_SE) {
+    // Normal D+/D- mode
+    if (d2p & D2P_DNPU) {
+      // DN pullup would say DP and DN are swapped
+      dp = ((d2p & D2P_DN_EN) && (d2p & D2P_DN)) ||
+           (!(d2p & D2P_DN_EN) && (d2p & D2P_DNPU));
+      dn = (d2p & D2P_DP_EN) && (d2p & D2P_DP);
+    } else {
+      // No DN pullup so normal orientation
+      dp = ((d2p & D2P_DP_EN) && (d2p & D2P_DP)) ||
+           (!(d2p & D2P_DP_EN) && (d2p & D2P_DPPU));
+      dn = (d2p & D2P_DN_EN) && (d2p & D2P_DN);
+    }
+  } else {
+    // "differential" mode uses D and SE0
+    if (d2p & D2P_D_EN) {
+      if (d2p & D2P_DNPU) {
+        // Pullup says swap i.e. D is inverted
+        dp = (d2p & D2P_SE0) ? 0 : ((d2p & D2P_D) ? 0 : 1);
+        dn = (d2p & D2P_SE0) ? 0 : ((d2p & D2P_D) ? 1 : 0);
+      } else {
+        dp = (d2p & D2P_SE0) ? 0 : ((d2p & D2P_D) ? 1 : 0);
+        dn = (d2p & D2P_SE0) ? 0 : ((d2p & D2P_D) ? 0 : 1);
+      }
+    } else {
+      dp = (d2p & D2P_PU) ? 1 : 0;
+      dn = 0;
+    }
+  }
 
   if (ctx->loglevel & LOG_BIT) {
-    n = snprintf(obuf, MAX_OBUF, "%4x %8d %s %s %s\n", ctx->frame, ctx->tick,
-                 raw_str, (d2p & D2P_PU) ? "PU" : "  ",
-                 (ctx->state == ST_GET) ? decode_usb[dp << 1 | dn] : "ZZ ");
-    ssize_t written = write(ctx->fifo_fd, obuf, n);
+    const char *pullup = (d2p & D2P_PU) ? "PU" : "  ";
+    const char *state =
+        (ctx->state == ST_GET) ? decode_usb[dp << 1 | dn] : "ZZ ";
+
+    n = snprintf(obuf, MAX_OBUF, "%4x %8d %s %s %s %x\n", ctx->frame, ctx->tick,
+                 raw_str, pullup, state, d2p);
+    ssize_t written = fwrite(obuf, sizeof(char), (size_t)n, ctx->mon_file);
     assert(written == n);
   }
 }
@@ -529,9 +568,9 @@ void pollRX(struct usbdpi_ctx *ctx, int sendHi, int nakData) {
       ctx->data[1] = 0x82;
       ctx->data[2] = 0 | CRC5(0x82, 11) << 3;
       ctx->data[3] = USB_PID_DATA0;
-      ctx->data[4] = 0x48;
-      ctx->data[5] = 0x69;
-      ctx->data[6] = 0x21;
+      ctx->data[4] = 0x48;  // "H"
+      ctx->data[5] = 0x69;  // "i"
+      ctx->data[6] = 0x21;  // "!"
       add_crc16(ctx->data, ctx->datastart, 7);
       // ctx->data[7] = 0xE0; // pre-computed CRC16
       // ctx->data[8] = 0x61;
@@ -541,6 +580,108 @@ void pollRX(struct usbdpi_ctx *ctx, int sendHi, int nakData) {
     default:
       break;
   }
+}
+
+// Test unimplemented endpoints
+void testUnimplEp(struct usbdpi_ctx *ctx, uint8_t pid) {
+  switch (ctx->hostSt) {
+    case HS_STARTFRAME:
+      if ((pid == USB_PID_SETUP) || (pid == USB_PID_OUT)) {
+        ctx->state = ST_SYNC;
+        ctx->bytes = 14;
+        ctx->datastart = 3;
+        ctx->byte = 0;
+        ctx->bit = 1;
+        // The bytes are transmitted LSB to MSB
+        ctx->data[0] = pid;
+        ctx->data[1] =
+            ((UNIMPL_EP_ID & 0x1) << 7) | 0x2;  // endpoint ID LSB, address
+        ctx->data[2] = CRC5((UNIMPL_EP_ID << 7) | 0x2, 11) << 3 |
+                       ((UNIMPL_EP_ID >> 1) & 0x7);  // CRC, endpoint ID MSBs
+
+        ctx->data[3] = USB_PID_DATA0;
+        ctx->data[4] = 0;  // h2d, std, device
+        ctx->data[5] = 5;  // set address
+        ctx->data[6] = 2;  // device address
+        ctx->data[7] = 0;
+        // Trigger bitstuffing, technically the device
+        // behaviour is unspecified with wIndex != 0
+        ctx->data[8] = 0xFF;  // wIndex = 0xFF00
+        ctx->data[9] = 0;
+        ctx->data[10] = 0;  // wLength = 0
+        ctx->data[11] = 0;
+        add_crc16(ctx->data, ctx->datastart, 12);
+        ctx->hostSt = HS_WAITACK;
+        break;
+      } else if (pid == USB_PID_IN) {
+        ctx->state = ST_SYNC;
+        ctx->bytes = 3;
+        ctx->datastart = 0;
+        ctx->byte = 0;
+        ctx->bit = 1;
+        // The bytes are transmitted LSB to MSB
+        ctx->data[0] = pid;
+        ctx->data[1] =
+            ((UNIMPL_EP_ID & 0x1) << 7) | 0x2;  // endpoint ID LSB, address
+        ctx->data[2] = CRC5((UNIMPL_EP_ID << 7) | 0x2, 11) << 3 |
+                       ((UNIMPL_EP_ID >> 1) & 0x7);  // CRC, endpoint ID MSBs
+        // Since the endpoint is not implemented, the device will respond with a
+        // STALL packet (not DATA0/1 or NAK).
+        ctx->hostSt = HS_WAITACK;
+        break;
+      } else {
+        ctx->hostSt = HS_NEXTFRAME;
+        printf(
+            "[usbdpi] testUnimplEp supports SETUP, OUT and IN transactions "
+            "only\n");
+        break;
+      }
+    case HS_WAITACK:
+      // Note: We currently can't observe the responses sent by the device, but
+      // monitor_usb() does log all transactions from host and device and does
+      // some basic decoding.
+      // Depending on the transaction type to unimplemented endpoints, we would
+      // expect the following response:
+      // - SETUP: no response (must be ignored by the device)
+      // - OUT/IN: a STALL packet from the device
+      ctx->wait = ctx->tick_bits + 32;  // HACK
+      ctx->hostSt = HS_NEXTFRAME;
+      printf("[usbdpi] testUnimplEp done\n");
+      break;
+    default:
+      break;
+  }
+}
+
+int set_driving(struct usbdpi_ctx *ctx, int d2p, int newval) {
+  if (d2p & D2P_DNPU) {
+    if (d2p & D2P_TXMODE_SE) {
+      return (ctx->driving & P2D_SENSE) | ((newval & P2D_DP) ? P2D_DN : 0) |
+             ((newval & P2D_DN) ? P2D_DP : 0);
+    }
+    if (newval & (P2D_DP | P2D_DN)) {
+      // sets single ended lines to K after swapping
+      return (ctx->driving & P2D_SENSE) | P2D_DP |
+             ((newval & P2D_DN) ? P2D_D : 0);
+    }
+    // SE0 so D could be anything (make it 1 after swapping)
+    return ctx->driving & P2D_SENSE;
+  }
+  if (d2p & D2P_TXMODE_SE) {
+    return (ctx->driving & P2D_SENSE) | newval;
+  }
+  if (newval & (P2D_DP | P2D_DN)) {
+    // sets single ended lines to K
+    return (ctx->driving & P2D_SENSE) | P2D_DN |
+           ((newval & P2D_DP) ? P2D_D : 0);
+  }
+  // SE0 so D could be anything (make it 1)
+  return (ctx->driving & P2D_SENSE) | P2D_D;
+}
+
+int inv_driving(struct usbdpi_ctx *ctx, int d2p) {
+  // works for either orientation
+  return ctx->driving ^ ((d2p & D2P_TXMODE_SE) ? (P2D_DP | P2D_DN) : P2D_D);
 }
 
 char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
@@ -553,10 +694,12 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
 
   if (ctx->tick == 0) {
     int i;
+#ifdef NEED_SLEEP
     for (i = 7; i > 0; i--) {
       printf("Sleep %d...\n", i);
       sleep(1);
     }
+#endif
   }
   ctx->tick++;
   ctx->tick_bits = ctx->tick >> 2;
@@ -564,7 +707,7 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
     return ctx->driving;
   }
 
-  monitor_usb(ctx->mon, ctx->fifo_fd, ctx->loglevel, ctx->tick,
+  monitor_usb(ctx->mon, ctx->mon_file, ctx->loglevel, ctx->tick,
               (ctx->state != ST_IDLE) && (ctx->state != ST_GET), ctx->driving,
               d2p, &(ctx->lastrxpid));
 
@@ -645,9 +788,18 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
         case 18:
           testIso(ctx);
           break;
+        case 20:
+          testUnimplEp(ctx, USB_PID_SETUP);
+          break;
+        case 21:
+          testUnimplEp(ctx, USB_PID_OUT);
+          break;
+        case 22:
+          testUnimplEp(ctx, USB_PID_IN);
+          break;
         default:
           if (ctx->frame > ctx->inframe &&
-              !(ctx->frame >= 20 && ctx->frame < 30)) {
+              !(ctx->frame >= 23 && ctx->frame < 33)) {
             pollRX(ctx, (ctx->frame == 9) || (ctx->frame == 14),
                    ((ctx->frame == 16) || (ctx->frame == 9)));
           }
@@ -656,7 +808,7 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
 
     case ST_SYNC:
       dat = ((USB_SYNC & ctx->bit)) ? P2D_DP : P2D_DN;
-      ctx->driving = (ctx->driving & P2D_SENSE) | dat;
+      ctx->driving = set_driving(ctx, d2p, dat);
       force_stat = 1;
       ctx->bit <<= 1;
       if (ctx->bit == 0x100) {
@@ -670,19 +822,19 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
       if ((ctx->linebits & 0x3f) == 0x3f &&
           !INSERT_ERR_BITSTUFF) {  // sent 6 ones
         // bit stuff and force a transition
-        ctx->driving ^= (P2D_DP | P2D_DN);
+        ctx->driving = inv_driving(ctx, d2p);
         force_stat = 1;
         ctx->linebits = (ctx->linebits << 1);
       } else if (ctx->byte >= ctx->bytes) {
         ctx->state = ST_EOP;
-        ctx->driving = ctx->driving & P2D_SENSE;  // SE0
+        ctx->driving = set_driving(ctx, d2p, 0);  // SE0
         ctx->bit = 1;
         force_stat = 1;
       } else {
         int nextbit;
         nextbit = (ctx->data[ctx->byte] & ctx->bit) ? 1 : 0;
         if (nextbit == 0) {
-          ctx->driving ^= (P2D_DP | P2D_DN);
+          ctx->driving = inv_driving(ctx, d2p);
         }
         ctx->linebits = (ctx->linebits << 1) | nextbit;
         force_stat = 1;
@@ -698,18 +850,17 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
       break;
 
     case ST_EOP0:
-      ctx->driving = ctx->driving & P2D_SENSE;  // SE0
+      ctx->driving = set_driving(ctx, d2p, 0);  // SE0
       ctx->state = ST_EOP;
       break;
 
     case ST_EOP:  // SE0 SE0 J
       if (ctx->bit == 4) {
-        ctx->driving = (ctx->driving & P2D_SENSE) | P2D_DP;  // J
+        ctx->driving = set_driving(ctx, d2p, P2D_DP);  // J
       }
       if (ctx->bit == 8) {
-        ctx->driving = (d2p & D2P_PU) ? (ctx->driving & P2D_SENSE) | P2D_DP
-                                      :               // Z + pullup
-                           ctx->driving & P2D_SENSE;  // z without pullup = SE0
+        // Stop driving: host pulldown to SE0 unless there is a pullup on DP
+        ctx->driving = set_driving(ctx, d2p, (d2p & D2P_PU) ? P2D_DP : 0);
         if (ctx->byte == ctx->datastart) {
           ctx->bit = 1;
           ctx->state = ST_SYNC;
@@ -726,10 +877,11 @@ char usbdpi_host_to_device(void *ctx_void, const svBitVecVal *usb_d2p) {
     char obuf[MAX_OBUF];
 
     n = snprintf(
-        obuf, MAX_OBUF, "%4x %8d              %s %s\n", ctx->frame, ctx->tick,
-        ctx->driving & P2D_SENSE ? "VBUS" : "    ",
-        (ctx->state != ST_IDLE) ? decode_usb[(ctx->driving >> 1) & 3] : "ZZ ");
-    ssize_t written = write(ctx->fifo_fd, obuf, n);
+        obuf, MAX_OBUF, "%4x %8d              %s %s %s\n", ctx->frame,
+        ctx->tick, ctx->driving & P2D_SENSE ? "VBUS" : "    ",
+        (ctx->state != ST_IDLE) ? decode_usb[(ctx->driving >> 1) & 3] : "ZZ ",
+        (ctx->driving & P2D_D) ? "1" : "0");
+    ssize_t written = fwrite(obuf, sizeof(char), (size_t)n, ctx->mon_file);
     assert(written == n);
   }
   return ctx->driving;
@@ -740,15 +892,6 @@ void usbdpi_close(void *ctx_void) {
   if (!ctx) {
     return;
   }
-  int rv;
-  rv = close(ctx->fifo_fd);
-  if (rv != 0) {
-    printf("USB: Failed to close FIFO: %s\n", strerror(errno));
-  }
-  rv = unlink(ctx->fifo_pathname);
-  if (rv != 0) {
-    printf("USB: Failed to unlink FIFO file at %s: %s\n", ctx->fifo_pathname,
-           strerror(errno));
-  }
+  fclose(ctx->mon_file);
   free(ctx);
 }

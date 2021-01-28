@@ -2,15 +2,20 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections import OrderedDict
+
 from .field_enums import HwAccess, SwAccess, SwRdAccess, SwWrAccess
 
 
-# helper funtion that strips trailing number from name
+# helper funtion that strips trailing _number (used as multireg suffix) from name
 # TODO: this is a workaround, should solve this in validate.py
 def _get_basename(name):
     for (k, c) in enumerate(name[::-1]):
         if not str.isdigit(c):
-            return name[0:len(name) - k]
+            if c == "_":
+                return name[0:len(name) - (k + 1)]
+            else:
+                break
     return ""
 
 
@@ -21,19 +26,6 @@ class Field():
     It has two additional (tool generated) fields, swrdaccess and swwraccess,
     which represent read and write type. This makes RTL generation code simpler.
     """
-    name = ""  # required
-    msb = 31  # required
-    lsb = 0  # required
-    resval = 0  # optional
-    swaccess = SwAccess.NONE  # optional
-    swrdaccess = SwRdAccess.NONE
-    swwraccess = SwWrAccess.NONE
-    hwaccess = HwAccess.HRO
-    hwqe = False
-    hwre = False
-    hwext = False
-    tags = []
-
     def __init__(self):
         self.name = ""  # required
         self.msb = 31  # required
@@ -47,6 +39,7 @@ class Field():
         self.hwre = False
         self.hwext = False
         self.tags = []
+        self.shadowed = False
 
     def get_n_bits(self, bittype=["q"]):
         n_bits = 0
@@ -70,19 +63,6 @@ class Field():
 
 
 class Reg():
-    name = ""
-    offset = 0
-    hwqe = False
-    hwre = False
-    hwext = False  # External register
-    resval = 0
-    dvrights = "RO"  # Used by UVM REG only
-    regwen = ""
-    fields = []
-    width = 0  # indicate register size
-    ishomog = 0
-    tags = []
-
     def __init__(self, name=""):
         self.name = name
         self.offset = 0
@@ -96,6 +76,9 @@ class Reg():
         self.width = 0
         self.ishomog = 0
         self.tags = []
+        self.shadowed = False
+        self.update_err_alert = ""  # Used by shadow reg DV
+        self.storage_err_alert = ""  # Used by shadow reg DV
 
     def is_multi_reg(self):
         """Returns true if this is a multireg"""
@@ -182,8 +165,6 @@ class Reg():
 
 
 class MultiReg(Reg):
-    param = ""
-
     def __init__(self, name):
         Reg.__init__(self, name)
         self.param = ""
@@ -194,34 +175,22 @@ class MultiReg(Reg):
 
 
 class Window():
-    base_addr = 0
-    limit_addr = 0
-    n_bits = 0
-    tags = []
-
     def __init__(self):
         self.base_addr = 0
+        self.byte_write = 0
         self.limit_addr = 0
         self.n_bits = 0
         self.tags = []
 
 
 class Block():
-    width = 32
-    addr_width = 12
-    base_addr = 0
-    name = ""
-    regs = []
-    wins = []
-    blocks = []
-    params = []
-    tags = []
-
     def __init__(self):
         self.width = 32
         self.addr_width = 12
-        self.base_addr = 0
+        # Key is instance name
+        self.base_addr = OrderedDict()
         self.name = ""
+        self.hier_path = ""
         self.regs = []
         self.wins = []
         self.blocks = []

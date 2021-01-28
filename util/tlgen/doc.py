@@ -5,7 +5,9 @@
 """
 import logging as log
 
-from .validate import *
+from reggen.validate import val_types
+
+from .validate import root
 
 doc_intro = """
 

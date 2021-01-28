@@ -47,23 +47,30 @@ ignoreFiles = [
   "/__pycache__/*",
   "/build/*",
   "/hw/vendor/*",
+  "/sw/vendor/*",
   "/meson.build$",
   "/opentitan-docs/",
   "/scratch/",
   "/site/*",
+  "/util/doxygen/",
   "Makefile$",
   "CLA",
   "COMMITTERS",
 ]
-pygmentsCodeFences = true
-pygmentsStyle = "tango"
 disableKinds = ["taxonomy", "taxonomyTerm", "RSS", "sitemap"]
 googleAnalytics = "UA-151030466-2"
+staticDir = [
+  # This is the generated software APIs
+  "build/docs-generated/sw/public-api",
+]
 
 [params]
 generatedRoot = "build/docs-generated"
 
 [markup]
+  [markup.highlight]
+    guessSyntax = true
+    noClasses = false
   [markup.goldmark.renderer]
     unsafe = true
   [markup.tableOfContents]

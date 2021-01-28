@@ -12,8 +12,20 @@ class alert_sender_driver extends alert_esc_base_driver;
 
   `uvm_component_new
 
+  // To guard alert ping response and real alert triggers won't trigger at the same time
+  semaphore alert_atomic = new(1);
+
   virtual task reset_signals();
-    cfg.vif.reset_alert();
+    do_reset();
+    forever begin
+      @(negedge cfg.vif.rst_n);
+      under_reset = 1;
+      do_reset();
+      @(posedge cfg.vif.rst_n);
+      void'(alert_atomic.try_get(1));
+      alert_atomic.put(1);
+      under_reset = 0;
+    end
   endtask
 
   // alert_sender drive responses by sending the alert_p and alert_n
@@ -29,15 +41,29 @@ class alert_sender_driver extends alert_esc_base_driver;
   virtual task send_alert();
     forever begin
       alert_esc_seq_item req, rsp;
-      wait(s_alert_send_q.size() > 0);
+      wait(s_alert_send_q.size() > 0 && !under_reset);
       req = s_alert_send_q.pop_front();
-      $cast(rsp, req.clone());
+      `downcast(rsp, req.clone());
       rsp.set_id_info(req);
       `uvm_info(`gfn,
           $sformatf("starting to send sender item, alert_send=%0b, ping_rsp=%0b, int_err=%0b",
           req.s_alert_send, req.s_alert_ping_rsp, req.int_err), UVM_HIGH)
 
-      drive_alert_pins(req);
+      fork
+        begin : isolation_fork
+          fork
+            begin
+              alert_atomic.get(1);
+              drive_alert_pins(req);
+              alert_atomic.put(1);
+            end
+            begin
+              wait(under_reset);
+            end
+          join_any
+          disable fork;
+        end
+      join
 
       `uvm_info(`gfn,
           $sformatf("finished sending sender item, alert_send=%0b, ping_rsp=%0b, int_err=%0b",
@@ -49,18 +75,34 @@ class alert_sender_driver extends alert_esc_base_driver;
   virtual task rsp_ping();
     forever begin
       alert_esc_seq_item req, rsp;
-      wait(s_alert_ping_rsp_q.size() > 0);
+      wait(s_alert_ping_rsp_q.size() > 0 && !under_reset);
       req = s_alert_ping_rsp_q.pop_front();
-      $cast(rsp, req.clone());
+      `downcast(rsp, req.clone());
       rsp.set_id_info(req);
       `uvm_info(`gfn,
           $sformatf("starting to send sender item, alert_send=%0b, ping_rsp=%0b, int_err=%0b",
           req.s_alert_send, req.s_alert_ping_rsp, req.int_err), UVM_HIGH)
 
-      cfg.vif.wait_ping();
-
-      // TODO: solve this: if alert and ping all this task together
-      drive_alert_pins(req);
+      fork
+        begin : isolation_fork
+          fork
+            begin
+              wait_ping();
+              alert_atomic.get(1);
+              if (!req.ping_timeout) begin
+                drive_alert_pins(req);
+              end else begin
+                repeat (cfg.ping_timeout_cycle) wait_sender_clk();
+              end
+              alert_atomic.put(1);
+            end
+            begin
+              wait(under_reset);
+            end
+          join_any
+          disable fork;
+        end
+      join
 
       `uvm_info(`gfn,
           $sformatf("finished sending sender item, alert_send=%0b, ping_rsp=%0b, int_err=%0b",
@@ -79,6 +121,7 @@ class alert_sender_driver extends alert_esc_base_driver;
     if (!req.int_err) begin
       set_alert_pins(alert_delay);
       reset_alert_pins(ack_delay);
+
     // alert signals integrity fail
     end else begin
       if (req.alert_int_err_type & HasAlertBeforeIntFailOnly) set_alert_pins(alert_delay);
@@ -86,43 +129,91 @@ class alert_sender_driver extends alert_esc_base_driver;
       if (req.alert_int_err_type & HasAlertAfterIntFailOnly) begin
         set_alert_pins(alert_delay);
       end else begin
-        cfg.vif.reset_alert();
+        reset_alert();
       end
     end
+
+    // there must have at least two sender clock delays before next alert_handshake
+    repeat(2) wait_sender_clk();
   endtask : drive_alert_pins
 
   // this task set alert_p=1 and alert_n=0 after certain delay
   virtual task set_alert_pins(int alert_delay);
-    @(cfg.vif.sender_cb);
-    repeat (alert_delay) @(cfg.vif.sender_cb);
-    cfg.vif.set_alert();
+    repeat (alert_delay + 1) begin
+      if (under_reset) return;
+      else wait_sender_clk();
+    end
+    set_alert();
   endtask : set_alert_pins
 
   // this task reset alert_p=0 and alert_n=1 after certain delay when:
   // ack handshake is finished or when timeout
   virtual task reset_alert_pins(int ack_delay);
     fork
-      begin : alert_timeout
-        repeat (cfg.ping_timeout_cycle) @(cfg.vif.sender_cb);
+      begin : isolation_fork
+        fork
+          begin : alert_timeout
+            repeat (cfg.handshake_timeout_cycle) wait_sender_clk();
+          end
+          begin : wait_alert_handshake
+            wait(cfg.vif.alert_rx.ack_p == 1'b1);
+            wait_sender_clk();
+            repeat (ack_delay) wait_sender_clk();
+            reset_alert();
+            wait(cfg.vif.alert_rx.ack_p == 1'b0);
+          end
+        join_any
+        disable fork;
       end
-      begin : wait_alert_handshake
-        cfg.vif.wait_ack();
-        @(cfg.vif.sender_cb);
-        repeat (ack_delay) @(cfg.vif.sender_cb);
-        cfg.vif.reset_alert();
-      end
-    join_any
-    disable fork;
+    join
   endtask : reset_alert_pins
 
   virtual task random_drive_int_fail(int int_err_cyc);
     repeat (req.int_err_cyc) begin
+      wait_sender_clk();
+      if (under_reset) break;
       randcase
-        1: cfg.vif.drive_alerts_low();
-        1: cfg.vif.drive_alerts_high();
+        1: drive_alerts_low();
+        1: drive_alerts_high();
       endcase
-        @(cfg.vif.sender_cb);
     end
   endtask : random_drive_int_fail
+
+  virtual task set_alert();
+    cfg.vif.sender_cb.alert_tx_int.alert_p <= 1'b1;
+    cfg.vif.sender_cb.alert_tx_int.alert_n <= 1'b0;
+  endtask
+
+  virtual task reset_alert();
+    cfg.vif.sender_cb.alert_tx_int.alert_p <= 1'b0;
+    cfg.vif.sender_cb.alert_tx_int.alert_n <= 1'b1;
+  endtask
+
+  virtual task drive_alerts_high();
+    cfg.vif.sender_cb.alert_tx_int.alert_p <= 1'b1;
+    cfg.vif.sender_cb.alert_tx_int.alert_n <= 1'b1;
+  endtask
+
+  virtual task drive_alerts_low();
+    cfg.vif.sender_cb.alert_tx_int.alert_p <= 1'b0;
+    cfg.vif.sender_cb.alert_tx_int.alert_n <= 1'b0;
+  endtask
+
+  virtual task wait_ping();
+    logic ping_p_value = cfg.vif.alert_rx.ping_p;
+    while (cfg.vif.alert_rx.ping_p === ping_p_value) begin
+      ping_p_value = cfg.vif.alert_rx.ping_p;
+      wait_sender_clk();
+    end
+  endtask : wait_ping
+
+  virtual task wait_sender_clk();
+    @(cfg.vif.sender_cb);
+  endtask
+
+  virtual task do_reset();
+    cfg.vif.alert_tx_int.alert_p <= 1'b0;
+    cfg.vif.alert_tx_int.alert_n <= 1'b1;
+  endtask
 
 endclass : alert_sender_driver

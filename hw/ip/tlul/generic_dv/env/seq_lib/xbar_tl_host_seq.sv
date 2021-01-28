@@ -9,15 +9,14 @@
 // Basic xbar TL host sequence
 class xbar_tl_host_seq extends tl_host_seq;
 
-  uint valid_host_id_width;
   // if enabled, will allow to access both mapped and unmapped addr
   bit en_unmapped_addr = 0;
 
   int valid_device_id[$];
 
-  // use below knob to control value of a_source in upper seq
-  bit override_a_source_val = 0;
-  int overridden_a_source_val;
+  // control the chance to use last address for current item
+  int use_last_item_addr_pct = 5;
+  bit [AddrWidth - 1   : 0] last_item_addr;
 
   `uvm_object_utils(xbar_tl_host_seq)
   `uvm_object_new
@@ -25,7 +24,9 @@ class xbar_tl_host_seq extends tl_host_seq;
   virtual function void randomize_req(tl_seq_item req, int idx);
     uint device_id;
     bit  is_mapped_addr;
+    bit  use_last_item_addr;
     uint addr_range_id;
+
     // randomize device_id, is_mapped_addr, addr_range_id first
     if (valid_device_id.size() > 0) begin
       device_id = $urandom_range(0, valid_device_id.size() - 1);
@@ -33,6 +34,7 @@ class xbar_tl_host_seq extends tl_host_seq;
     end else begin
       device_id = $urandom_range(0, xbar_devices.size() - 1);
     end
+    if (use_last_item_addr_pct > $urandom_range(99, 0)) use_last_item_addr = 1;
     if (en_unmapped_addr) begin
       is_mapped_addr = $urandom_range(0, 1);
     end else begin
@@ -41,17 +43,9 @@ class xbar_tl_host_seq extends tl_host_seq;
     end
     if (!(req.randomize() with {
         a_valid_delay inside {[min_req_delay:max_req_delay]};
-        // Keep msb to zero as it's reserved to add host ID
-        (a_source >> valid_host_id_width) == 0;
-        if (override_a_source_val) {
-          a_source == overridden_a_source_val;
-        } else {
-          // keep a_source unique
-          foreach (pending_req[i]) {
-            a_source != pending_req[i].a_source;
-          }
-        }
-        if (is_mapped_addr) {
+        if (use_last_item_addr) {
+          a_addr == last_item_addr;
+        } else if (is_mapped_addr) {
           a_addr inside {[xbar_devices[device_id].addr_ranges[addr_range_id].start_addr :
                           xbar_devices[device_id].addr_ranges[addr_range_id].end_addr]};
         } else {
@@ -62,11 +56,14 @@ class xbar_tl_host_seq extends tl_host_seq;
         }})) begin
       `uvm_fatal(get_full_name(), "Cannot randomize req")
     end
+
+    last_item_addr = req.a_addr;
   endfunction
 
   // prevent seq runs out of source ID
   virtual task pre_start_item(tl_seq_item req);
-    wait(pending_req.size < p_sequencer.cfg.max_outstanding_req);
+    super.pre_start_item(req);
+    wait(pending_req.size() < cfg.max_outstanding_req);
   endtask
 
 endclass
